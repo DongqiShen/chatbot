@@ -8,9 +8,9 @@ import {
 } from "react";
 import { useArtifactSelector } from "@/hooks/use-artifact";
 import { cn } from "@/lib/utils";
-import { Loader } from "./elements/loader";
 import { CrossSmallIcon, TerminalWindowIcon } from "./icons";
 import { Button } from "./ui/button";
+import { Spinner } from "./ui/spinner";
 
 export type ConsoleOutputContent = {
   type: "text" | "image";
@@ -148,7 +148,7 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
               ) ? (
                 <div className="flex flex-row gap-2">
                   <div className="mt-0.5 mb-auto size-fit self-center">
-                    <Loader size={16} />
+                    <Spinner className="size-4" />
                   </div>
                   <div className="text-muted-foreground">
                     {consoleOutput.status === "in_progress"
@@ -162,9 +162,9 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
                 </div>
               ) : (
                 <div className="flex w-full flex-col gap-2 overflow-x-scroll text-zinc-900 dark:text-zinc-50">
-                  {consoleOutput.contents.map((content, contentIndex) =>
+                  {consoleOutput.contents.map((content) =>
                     content.type === "image" ? (
-                      <picture key={`${consoleOutput.id}-${contentIndex}`}>
+                      <picture key={`${consoleOutput.id}-${content.value}`}>
                         <img
                           alt="output"
                           className="w-full max-w-(--breakpoint-toast-mobile) rounded-md"
@@ -174,7 +174,7 @@ export function Console({ consoleOutputs, setConsoleOutputs }: ConsoleProps) {
                     ) : (
                       <div
                         className="w-full whitespace-pre-line break-words"
-                        key={`${consoleOutput.id}-${contentIndex}`}
+                        key={`${consoleOutput.id}-${content.value}`}
                       >
                         {content.value}
                       </div>
