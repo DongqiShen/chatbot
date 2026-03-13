@@ -32,6 +32,7 @@ import {
   DEFAULT_CHAT_MODEL,
   modelsByProvider,
 } from "@/lib/ai/models";
+import { signIn, useSession } from "@/lib/client";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -86,6 +87,8 @@ function PureMultimodalInput({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
+  const { data: session, refetch: refetchSession } = useSession();
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   const hasAutoFocused = useRef(false);
   useEffect(() => {
@@ -304,9 +307,20 @@ function PureMultimodalInput({
 
       <PromptInput
         className="[&>div]:rounded-xl"
-        onSubmit={() => {
+        onSubmit={async () => {
           if (!input.trim() && attachments.length === 0) {
             return;
+          }
+          if (!session && !isSigningIn) {
+            setIsSigningIn(true);
+            const { error } = await signIn.anonymous();
+            if (error) {
+              toast.error("Failed to create session, please try again!");
+              setIsSigningIn(false);
+              return;
+            }
+            await refetchSession();
+            setIsSigningIn(false);
           }
           if (status === "ready") {
             submitForm();
