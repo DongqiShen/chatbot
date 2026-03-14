@@ -1,24 +1,34 @@
 "use client";
 
+import {
+  MessageSquareIcon,
+  PanelLeftIcon,
+  PenSquareIcon,
+  TrashIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
-import { PlusIcon, TrashIcon } from "@/components/icons";
 import {
   getChatHistoryPaginationKey,
   SidebarHistory,
 } from "@/components/sidebar-history";
 import { SidebarUserNav } from "@/components/sidebar-user-nav";
-import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarRail,
+  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { AuthUser } from "@/lib/auth";
@@ -36,7 +46,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export function AppSidebar({ user }: { user: AuthUser | undefined }) {
   const router = useRouter();
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, toggleSidebar } = useSidebar();
   const { mutate } = useSWRConfig();
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
 
@@ -63,68 +73,76 @@ export function AppSidebar({ user }: { user: AuthUser | undefined }) {
 
   return (
     <>
-      <Sidebar className="group-data-[side=left]:border-r-0">
+      <Sidebar
+        className="border-r-0 [&_[data-sidebar=menu-button]]:bg-transparent [&_[data-sidebar=menu-button]]:hover:bg-transparent [&_[data-sidebar=menu-button]]:active:bg-transparent [&_[data-sidebar=menu-button][data-active]]:bg-transparent"
+        collapsible="icon"
+      >
         <SidebarHeader>
           <SidebarMenu>
-            <div className="flex flex-row items-center justify-between">
-              <Link
-                className="flex flex-row items-center gap-3"
-                href="/"
-                onClick={() => {
-                  setOpenMobile(false);
-                }}
-              >
-                <span className="cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted">
-                  Chatbot
-                </span>
-              </Link>
-              <div className="flex flex-row gap-1">
-                {user && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={() => setShowDeleteAllDialog(true)}
-                        size="icon-sm"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <TrashIcon />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent align="end" className="hidden md:block">
-                      Delete All Chats
-                    </TooltipContent>
-                  </Tooltip>
-                )}
+            <SidebarMenuItem className="flex flex-row items-center justify-between">
+              <div className="group/logo relative">
+                <SidebarMenuButton
+                  asChild
+                  className="size-8 group-data-[collapsible=icon]:group-hover/logo:opacity-0"
+                  tooltip="Chatbot"
+                >
+                  <Link href="/" onClick={() => setOpenMobile(false)}>
+                    <MessageSquareIcon />
+                  </Link>
+                </SidebarMenuButton>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      onClick={() => {
-                        setOpenMobile(false);
-                        router.push("/");
-                        router.refresh();
-                      }}
-                      size="icon-sm"
-                      type="button"
-                      variant="ghost"
+                    <SidebarMenuButton
+                      className="absolute inset-0 size-8 opacity-0 group-data-[collapsible=icon]:group-hover/logo:opacity-100"
+                      onClick={() => toggleSidebar()}
                     >
-                      <PlusIcon />
-                    </Button>
+                      <PanelLeftIcon />
+                    </SidebarMenuButton>
                   </TooltipTrigger>
-                  <TooltipContent align="end" className="hidden md:block">
-                    New Chat
-                  </TooltipContent>
+                  <TooltipContent side="right">Open sidebar</TooltipContent>
                 </Tooltip>
               </div>
-            </div>
+              <div className="group-data-[collapsible=icon]:hidden">
+                <SidebarTrigger />
+              </div>
+            </SidebarMenuItem>
           </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    onClick={() => {
+                      setOpenMobile(false);
+                      router.push("/");
+                      router.refresh();
+                    }}
+                    tooltip="New Chat"
+                  >
+                    <PenSquareIcon />
+                    <span>New chat</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {user && (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      onClick={() => setShowDeleteAllDialog(true)}
+                      tooltip="Delete All Chats"
+                    >
+                      <TrashIcon />
+                      <span>Delete all chats</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
           <SidebarHistory user={user} />
         </SidebarContent>
-        <SidebarFooter>
-          <SidebarUserNav user={user ?? { email: null, isAnonymous: true }} />
-        </SidebarFooter>
+        <SidebarFooter>{user && <SidebarUserNav user={user} />}</SidebarFooter>
+        <SidebarRail />
       </Sidebar>
 
       <AlertDialog

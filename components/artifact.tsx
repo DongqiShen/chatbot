@@ -316,7 +316,7 @@ function PureArtifact({
                 {!isCurrentVersion && (
                   <motion.div
                     animate={{ opacity: 1 }}
-                    className="absolute top-0 left-0 z-50 h-dvh w-[400px] bg-zinc-900/50"
+                    className="absolute top-0 left-0 z-50 h-dvh w-[400px] bg-neutral-900/50"
                     exit={{ opacity: 0 }}
                     initial={{ opacity: 0 }}
                   />
@@ -393,7 +393,7 @@ function PureArtifact({
                     },
                   }
             }
-            className="fixed flex h-dvh flex-col overflow-y-scroll border-zinc-200 bg-background md:border-l dark:border-zinc-700 dark:bg-muted"
+            className="fixed flex h-dvh flex-col overflow-y-scroll border-neutral-200 bg-background md:border-l dark:border-neutral-700 dark:bg-muted"
             exit={{
               opacity: 0,
               scale: 0.5,

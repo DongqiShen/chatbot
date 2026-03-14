@@ -19,6 +19,7 @@ import {
 import {
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarMenu,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -166,9 +167,9 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
 
   if (!user) {
     return (
-      <SidebarGroup>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-neutral-500">
             Login to save and revisit previous chats!
           </div>
         </SidebarGroupContent>
@@ -178,10 +179,8 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
 
   if (isLoading) {
     return (
-      <SidebarGroup>
-        <div className="px-2 py-1 text-sidebar-foreground/50 text-xs">
-          Today
-        </div>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroupLabel>Your chats</SidebarGroupLabel>
         <SidebarGroupContent>
           <div className="flex flex-col">
             {[44, 32, 28, 64, 52].map((item) => (
@@ -207,9 +206,10 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
 
   if (hasEmptyChatHistory) {
     return (
-      <SidebarGroup>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroupLabel>Your chats</SidebarGroupLabel>
         <SidebarGroupContent>
-          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
+          <div className="flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-neutral-500">
             Your conversations will appear here once you start chatting!
           </div>
         </SidebarGroupContent>
@@ -219,7 +219,8 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
 
   return (
     <>
-      <SidebarGroup>
+      <SidebarGroup className="group-data-[collapsible=icon]:hidden">
+        <SidebarGroupLabel>Your chats</SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             {paginatedChatHistories &&
@@ -315,7 +316,7 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
                     {groupedChats.older.length > 0 && (
                       <div>
                         <div className="px-2 py-1 text-sidebar-foreground/50 text-xs">
-                          Older than last month
+                          Older
                         </div>
                         {groupedChats.older.map((chat) => (
                           <ChatItem
@@ -344,16 +345,12 @@ export function SidebarHistory({ user }: { user: AuthUser | undefined }) {
             }}
           />
 
-          {hasReachedEnd ? (
-            <div className="mt-8 flex w-full flex-row items-center justify-center gap-2 px-2 text-sm text-zinc-500">
-              You have reached the end of your chat history.
-            </div>
-          ) : (
-            <div className="mt-8 flex flex-row items-center gap-2 p-2 text-zinc-500 dark:text-zinc-400">
+          {hasReachedEnd ? null : (
+            <div className="mt-4 flex flex-row items-center gap-2 p-2 text-neutral-500 dark:text-neutral-400">
               <div className="animate-spin">
                 <LoaderIcon />
               </div>
-              <div>Loading Chats...</div>
+              <div className="text-xs">Loading...</div>
             </div>
           )}
         </SidebarGroupContent>
