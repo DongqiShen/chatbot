@@ -14,10 +14,10 @@ import {
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import type { ArtifactKind } from "@/components/artifact";
-import type { VisibilityType } from "@/components/visibility-selector";
+import type { ArtifactKind } from "@/components/chat/artifact";
+import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { ChatbotError } from "../errors";
-
+import { generateUUID } from "../utils";
 import {
   type Chat,
   chat,
@@ -27,12 +27,52 @@ import {
   type Suggestion,
   stream,
   suggestion,
+  type User,
+  user,
   vote,
 } from "./schema";
+import { generateHashedPassword } from "./utils";
 
-// biome-ignore lint: Forbidden non-null assertion.
-const client = postgres(process.env.POSTGRES_URL!);
+const client = postgres(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
+
+export async function getUser(email: string): Promise<User[]> {
+  try {
+    return await db.select().from(user).where(eq(user.email, email));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get user by email"
+    );
+  }
+}
+
+export async function createUser(email: string, password: string) {
+  const hashedPassword = generateHashedPassword(password);
+
+  try {
+    return await db.insert(user).values({ email, password: hashedPassword });
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to create user");
+  }
+}
+
+export async function createGuestUser() {
+  const email = `guest-${Date.now()}`;
+  const password = generateHashedPassword(generateUUID());
+
+  try {
+    return await db.insert(user).values({ email, password }).returning({
+      id: user.id,
+      email: user.email,
+    });
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to create guest user"
+    );
+  }
+}
 
 export async function saveChat({
   id,
@@ -122,7 +162,7 @@ export async function getChatsByUserId({
   try {
     const extendedLimit = limit + 1;
 
-    const query = (whereCondition?: SQL<any>) =>
+    const query = (whereCondition?: SQL<unknown>) =>
       db
         .select()
         .from(chat)
@@ -306,6 +346,42 @@ export async function saveDocument({
   }
 }
 
+export async function updateDocumentContent({
+  id,
+  content,
+}: {
+  id: string;
+  content: string;
+}) {
+  try {
+    const docs = await db
+      .select()
+      .from(document)
+      .where(eq(document.id, id))
+      .orderBy(desc(document.createdAt))
+      .limit(1);
+
+    const latest = docs[0];
+    if (!latest) {
+      throw new ChatbotError("not_found:database", "Document not found");
+    }
+
+    return await db
+      .update(document)
+      .set({ content })
+      .where(and(eq(document.id, id), eq(document.createdAt, latest.createdAt)))
+      .returning();
+  } catch (_error) {
+    if (_error instanceof ChatbotError) {
+      throw _error;
+    }
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update document content"
+    );
+  }
+}
+
 export async function getDocumentsById({ id }: { id: string }) {
   try {
     const documents = await db
@@ -479,8 +555,7 @@ export async function updateChatTitleById({
 }) {
   try {
     return await db.update(chat).set({ title }).where(eq(chat.id, chatId));
-  } catch (error) {
-    console.warn("Failed to update title for chat", chatId, error);
+  } catch (_error) {
     return;
   }
 }
@@ -493,7 +568,7 @@ export async function getMessageCountByUserId({
   differenceInHours: number;
 }) {
   try {
-    const twentyFourHoursAgo = new Date(
+    const cutoffTime = new Date(
       Date.now() - differenceInHours * 60 * 60 * 1000
     );
 
@@ -504,7 +579,7 @@ export async function getMessageCountByUserId({
       .where(
         and(
           eq(chat.userId, id),
-          gte(message.createdAt, twentyFourHoursAgo),
+          gte(message.createdAt, cutoffTime),
           eq(message.role, "user")
         )
       )

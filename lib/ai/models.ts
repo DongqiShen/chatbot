@@ -1,70 +1,179 @@
-// Curated list of top models from Vercel AI Gateway
-export const DEFAULT_CHAT_MODEL = "openai/gpt-4.1-mini";
+export const DEFAULT_CHAT_MODEL = "moonshotai/kimi-k2-0905";
+
+export const titleModel = {
+  id: "mistral/mistral-small",
+  name: "Mistral Small",
+  provider: "mistral",
+  description: "Fast model for title generation",
+  gatewayOrder: ["mistral"],
+};
+
+export type ModelCapabilities = {
+  tools: boolean;
+  vision: boolean;
+  reasoning: boolean;
+};
 
 export type ChatModel = {
   id: string;
   name: string;
   provider: string;
   description: string;
+  gatewayOrder?: string[];
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
 };
 
 export const chatModels: ChatModel[] = [
-  // Anthropic
   {
-    id: "anthropic/claude-haiku-4.5",
-    name: "Claude Haiku 4.5",
-    provider: "anthropic",
-    description: "Fast and affordable, great for everyday tasks",
+    id: "deepseek/deepseek-v3.2",
+    name: "DeepSeek V3.2",
+    provider: "deepseek",
+    description: "Fast and capable model with tool use",
+    gatewayOrder: ["bedrock", "deepinfra"],
   },
-  // OpenAI
   {
-    id: "openai/gpt-4.1-mini",
-    name: "GPT-4.1 Mini",
+    id: "mistral/codestral",
+    name: "Codestral",
+    provider: "mistral",
+    description: "Code-focused model with tool use",
+    gatewayOrder: ["mistral"],
+  },
+  {
+    id: "mistral/mistral-small",
+    name: "Mistral Small",
+    provider: "mistral",
+    description: "Fast vision model with tool use",
+    gatewayOrder: ["mistral"],
+  },
+  {
+    id: "moonshotai/kimi-k2-0905",
+    name: "Kimi K2 0905",
+    provider: "moonshotai",
+    description: "Fast model with tool use",
+    gatewayOrder: ["baseten", "fireworks"],
+  },
+  {
+    id: "moonshotai/kimi-k2.5",
+    name: "Kimi K2.5",
+    provider: "moonshotai",
+    description: "Moonshot AI flagship model",
+    gatewayOrder: ["fireworks", "bedrock"],
+  },
+  {
+    id: "openai/gpt-oss-20b",
+    name: "GPT OSS 20B",
     provider: "openai",
-    description: "Fast and cost-effective for simple tasks",
+    description: "Compact reasoning model",
+    gatewayOrder: ["groq", "bedrock"],
+    reasoningEffort: "low",
   },
   {
-    id: "openai/gpt-5-mini",
-    name: "GPT-5 Mini",
+    id: "openai/gpt-oss-120b",
+    name: "GPT OSS 120B",
     provider: "openai",
-    description: "Most capable OpenAI model",
+    description: "Open-source 120B parameter model",
+    gatewayOrder: ["fireworks", "bedrock"],
+    reasoningEffort: "low",
   },
-  // Google
-  {
-    id: "google/gemini-2.5-flash-lite",
-    name: "Gemini 2.5 Flash Lite",
-    provider: "google",
-    description: "Ultra fast and affordable",
-  },
-  {
-    id: "google/gemini-3-pro-preview",
-    name: "Gemini 3 Pro",
-    provider: "google",
-    description: "Most capable Google model",
-  },
-  // xAI
   {
     id: "xai/grok-4.1-fast-non-reasoning",
     name: "Grok 4.1 Fast",
     provider: "xai",
-    description: "Fast with 30K context",
-  },
-  // Reasoning models (extended thinking)
-  {
-    id: "anthropic/claude-3.7-sonnet-thinking",
-    name: "Claude 3.7 Sonnet",
-    provider: "reasoning",
-    description: "Extended thinking for complex problems",
-  },
-  {
-    id: "xai/grok-code-fast-1-thinking",
-    name: "Grok Code Fast",
-    provider: "reasoning",
-    description: "Reasoning optimized for code",
+    description: "Fast non-reasoning model with tool use",
+    gatewayOrder: ["xai"],
   },
 ];
 
-// Group models by provider for UI
+export async function getCapabilities(): Promise<
+  Record<string, ModelCapabilities>
+> {
+  const results = await Promise.all(
+    chatModels.map(async (model) => {
+      try {
+        const res = await fetch(
+          `https://ai-gateway.vercel.sh/v1/models/${model.id}/endpoints`,
+          { next: { revalidate: 86_400 } }
+        );
+        if (!res.ok) {
+          return [model.id, { tools: false, vision: false, reasoning: false }];
+        }
+
+        const json = await res.json();
+        const endpoints = json.data?.endpoints ?? [];
+        const params = new Set(
+          endpoints.flatMap(
+            (e: { supported_parameters?: string[] }) =>
+              e.supported_parameters ?? []
+          )
+        );
+        const inputModalities = new Set(
+          json.data?.architecture?.input_modalities ?? []
+        );
+
+        return [
+          model.id,
+          {
+            tools: params.has("tools"),
+            vision: inputModalities.has("image"),
+            reasoning: params.has("reasoning"),
+          },
+        ];
+      } catch {
+        return [model.id, { tools: false, vision: false, reasoning: false }];
+      }
+    })
+  );
+
+  return Object.fromEntries(results);
+}
+
+export const isDemo = process.env.IS_DEMO === "1";
+
+type GatewayModel = {
+  id: string;
+  name: string;
+  type?: string;
+  tags?: string[];
+};
+
+export type GatewayModelWithCapabilities = ChatModel & {
+  capabilities: ModelCapabilities;
+};
+
+export async function getAllGatewayModels(): Promise<
+  GatewayModelWithCapabilities[]
+> {
+  try {
+    const res = await fetch("https://ai-gateway.vercel.sh/v1/models", {
+      next: { revalidate: 86_400 },
+    });
+    if (!res.ok) {
+      return [];
+    }
+
+    const json = await res.json();
+    return (json.data ?? [])
+      .filter((m: GatewayModel) => m.type === "language")
+      .map((m: GatewayModel) => ({
+        id: m.id,
+        name: m.name,
+        provider: m.id.split("/")[0],
+        description: "",
+        capabilities: {
+          tools: m.tags?.includes("tool-use") ?? false,
+          vision: m.tags?.includes("vision") ?? false,
+          reasoning: m.tags?.includes("reasoning") ?? false,
+        },
+      }));
+  } catch {
+    return [];
+  }
+}
+
+export function getActiveModels(): ChatModel[] {
+  return chatModels;
+}
+
 export const allowedModelIds = new Set(chatModels.map((m) => m.id));
 
 export const modelsByProvider = chatModels.reduce(

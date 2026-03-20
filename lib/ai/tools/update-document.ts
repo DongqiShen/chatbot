@@ -1,22 +1,29 @@
 import { tool, type UIMessageStreamWriter } from "ai";
+import type { Session } from "next-auth";
 import { z } from "zod";
 import { documentHandlersByArtifactKind } from "@/lib/artifacts/server";
-import type { AuthSession } from "@/lib/auth";
 import { getDocumentById } from "@/lib/db/queries";
 import type { ChatMessage } from "@/lib/types";
 
 type UpdateDocumentProps = {
-  session: NonNullable<AuthSession>;
+  session: Session;
   dataStream: UIMessageStreamWriter<ChatMessage>;
+  modelId: string;
 };
 
-export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
+export const updateDocument = ({
+  session,
+  dataStream,
+  modelId,
+}: UpdateDocumentProps) =>
   tool({
-    description: "Update a document with the given description.",
+    description:
+      "Full rewrite of an existing artifact. Only use for major changes where most content needs replacing. Prefer editDocument for targeted changes.",
     inputSchema: z.object({
-      id: z.string().describe("The ID of the document to update"),
+      id: z.string().describe("The ID of the artifact to rewrite"),
       description: z
         .string()
+        .default("Improve the content")
         .describe("The description of changes that need to be made"),
     }),
     execute: async ({ id, description }) => {
@@ -26,6 +33,10 @@ export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
         return {
           error: "Document not found",
         };
+      }
+
+      if (document.userId !== session.user?.id) {
+        return { error: "Forbidden" };
       }
 
       dataStream.write({
@@ -48,6 +59,7 @@ export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
         description,
         dataStream,
         session,
+        modelId,
       });
 
       dataStream.write({ type: "data-finish", data: null, transient: true });
@@ -56,7 +68,10 @@ export const updateDocument = ({ session, dataStream }: UpdateDocumentProps) =>
         id,
         title: document.title,
         kind: document.kind,
-        content: "The document has been updated successfully.",
+        content:
+          document.kind === "code"
+            ? "The script has been updated successfully."
+            : "The document has been updated successfully.",
       };
     },
   });

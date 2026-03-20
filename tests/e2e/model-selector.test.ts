@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const MODEL_BUTTON_REGEX = /Gemini|Claude|GPT|Grok/i;
+const MODEL_BUTTON_REGEX = /Kimi|Codestral|Mistral|DeepSeek|GPT|Grok/i;
 
 test.describe("Model Selector", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,7 +8,6 @@ test.describe("Model Selector", () => {
   });
 
   test("displays a model button", async ({ page }) => {
-    // Look for any button with model-related content
     const modelButton = page
       .locator("button")
       .filter({ hasText: MODEL_BUTTON_REGEX })
@@ -23,7 +22,6 @@ test.describe("Model Selector", () => {
       .first();
     await modelButton.click();
 
-    // Search input should be visible in the popover
     await expect(page.getByPlaceholder("Search models...")).toBeVisible();
   });
 
@@ -35,10 +33,9 @@ test.describe("Model Selector", () => {
     await modelButton.click();
 
     const searchInput = page.getByPlaceholder("Search models...");
-    await searchInput.fill("Claude");
+    await searchInput.fill("Mistral");
 
-    // Should show at least one Claude model
-    await expect(page.getByText("Claude Haiku").first()).toBeVisible();
+    await expect(page.getByText("Mistral Small").first()).toBeVisible();
   });
 
   test("can close model selector by clicking outside", async ({ page }) => {
@@ -50,7 +47,6 @@ test.describe("Model Selector", () => {
 
     await expect(page.getByPlaceholder("Search models...")).toBeVisible();
 
-    // Click outside to close
     await page.keyboard.press("Escape");
 
     await expect(page.getByPlaceholder("Search models...")).not.toBeVisible();
@@ -63,9 +59,8 @@ test.describe("Model Selector", () => {
       .first();
     await modelButton.click();
 
-    // Should show provider group headers
-    await expect(page.getByText("Anthropic")).toBeVisible();
-    await expect(page.getByText("Google")).toBeVisible();
+    await expect(page.getByText("Mistral")).toBeVisible();
+    await expect(page.getByText("Moonshot")).toBeVisible();
   });
 
   test("can select a different model", async ({ page }) => {
@@ -75,15 +70,12 @@ test.describe("Model Selector", () => {
       .first();
     await modelButton.click();
 
-    // Select a specific model
-    await page.getByText("Claude Haiku").first().click();
+    await page.getByText("Mistral Small").first().click();
 
-    // Popover should close
     await expect(page.getByPlaceholder("Search models...")).not.toBeVisible();
 
-    // Model button should now show the selected model
     await expect(
-      page.locator("button").filter({ hasText: "Claude Haiku" }).first()
+      page.locator("button").filter({ hasText: "Mistral Small" }).first()
     ).toBeVisible();
   });
 });

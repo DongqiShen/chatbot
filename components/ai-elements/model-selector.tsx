@@ -2,7 +2,6 @@ import type { ComponentProps, ReactNode } from "react";
 
 import {
   Command,
-  CommandDialog,
   CommandEmpty,
   CommandGroup,
   CommandInput,
@@ -12,54 +11,49 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import type { Popover as PopoverPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 
-export type ModelSelectorProps = ComponentProps<typeof Dialog>;
+export type ModelSelectorProps = React.ComponentProps<typeof PopoverPrimitive.Root>;
 
 export const ModelSelector = (props: ModelSelectorProps) => (
-  <Dialog {...props} />
+  <Popover {...props} />
 );
 
-export type ModelSelectorTriggerProps = ComponentProps<typeof DialogTrigger>;
+export type ModelSelectorTriggerProps = ComponentProps<typeof PopoverTrigger>;
 
 export const ModelSelectorTrigger = (props: ModelSelectorTriggerProps) => (
-  <DialogTrigger {...props} />
+  <PopoverTrigger {...props} />
 );
 
-export type ModelSelectorContentProps = ComponentProps<typeof DialogContent> & {
+export type ModelSelectorContentProps = ComponentProps<typeof PopoverContent> & {
   title?: ReactNode;
 };
 
 export const ModelSelectorContent = ({
   className,
   children,
-  title = "Model Selector",
+  title: _title,
   ...props
 }: ModelSelectorContentProps) => (
-  <DialogContent
-    aria-describedby={undefined}
+  <PopoverContent
+    align="start"
     className={cn(
-      "outline! border-none! p-0 outline-border! outline-solid!",
+      "w-[280px] p-0 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-[var(--shadow-float)]",
       className
     )}
+    side="top"
+    sideOffset={8}
     {...props}
   >
-    <DialogTitle className="sr-only">{title}</DialogTitle>
     <Command className="**:data-[slot=command-input-wrapper]:h-auto">
       {children}
     </Command>
-  </DialogContent>
-);
-
-export type ModelSelectorDialogProps = ComponentProps<typeof CommandDialog>;
-
-export const ModelSelectorDialog = (props: ModelSelectorDialogProps) => (
-  <CommandDialog {...props} />
+  </PopoverContent>
 );
 
 export type ModelSelectorInputProps = ComponentProps<typeof CommandInput>;
@@ -68,13 +62,13 @@ export const ModelSelectorInput = ({
   className,
   ...props
 }: ModelSelectorInputProps) => (
-  <CommandInput className={cn("h-auto py-3.5", className)} {...props} />
+  <CommandInput className={cn("h-auto py-2.5 text-[13px]", className)} {...props} />
 );
 
 export type ModelSelectorListProps = ComponentProps<typeof CommandList>;
 
-export const ModelSelectorList = (props: ModelSelectorListProps) => (
-  <CommandList {...props} />
+export const ModelSelectorList = ({ className, ...props }: ModelSelectorListProps) => (
+  <CommandList className={cn("max-h-[280px]", className)} {...props} />
 );
 
 export type ModelSelectorEmptyProps = ComponentProps<typeof CommandEmpty>;
@@ -91,8 +85,8 @@ export const ModelSelectorGroup = (props: ModelSelectorGroupProps) => (
 
 export type ModelSelectorItemProps = ComponentProps<typeof CommandItem>;
 
-export const ModelSelectorItem = (props: ModelSelectorItemProps) => (
-  <CommandItem {...props} />
+export const ModelSelectorItem = ({ className, ...props }: ModelSelectorItemProps) => (
+  <CommandItem className={cn("w-full text-[13px] rounded-lg", className)} {...props} />
 );
 
 export type ModelSelectorShortcutProps = ComponentProps<typeof CommandShortcut>;
@@ -182,10 +176,10 @@ export const ModelSelectorLogo = ({
   <img
     {...props}
     alt={`${provider} logo`}
-    className={cn("size-3 dark:invert", className)}
-    height={12}
+    className={cn("size-4 dark:invert", className)}
+    height={16}
     src={`https://models.dev/logos/${provider}.svg`}
-    width={12}
+    width={16}
   />
 );
 
@@ -197,7 +191,7 @@ export const ModelSelectorLogoGroup = ({
 }: ModelSelectorLogoGroupProps) => (
   <div
     className={cn(
-      "flex shrink-0 items-center -space-x-1 [&>img]:rounded-full [&>img]:bg-background [&>img]:p-px [&>img]:ring-1 dark:[&>img]:bg-foreground",
+      "flex shrink-0 items-center -space-x-1 [&>img]:rounded-full [&>img]:p-px [&>img]:ring-1 [&>img]:ring-border/30",
       className
     )}
     {...props}

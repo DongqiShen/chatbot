@@ -20,18 +20,16 @@ const userMessageSchema = z.object({
   parts: z.array(partSchema),
 });
 
-// For tool approval flows, we accept all messages (more permissive schema)
-const messageSchema = z.object({
+const toolApprovalMessageSchema = z.object({
   id: z.string(),
-  role: z.string(),
-  parts: z.array(z.any()),
+  role: z.enum(["user", "assistant"]),
+  parts: z.array(z.record(z.unknown())),
 });
 
 export const postRequestBodySchema = z.object({
   id: z.string().uuid(),
-  // Either a single new message or all messages (for tool approvals)
   message: userMessageSchema.optional(),
-  messages: z.array(messageSchema).optional(),
+  messages: z.array(toolApprovalMessageSchema).optional(),
   selectedChatModel: z.string(),
   selectedVisibilityType: z.enum(["public", "private"]),
 });

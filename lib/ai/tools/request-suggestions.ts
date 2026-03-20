@@ -1,20 +1,22 @@
 import { Output, streamText, tool, type UIMessageStreamWriter } from "ai";
+import type { Session } from "next-auth";
 import { z } from "zod";
-import type { AuthSession } from "@/lib/auth";
 import { getDocumentById, saveSuggestions } from "@/lib/db/queries";
 import type { Suggestion } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
-import { getArtifactModel } from "../providers";
+import { getLanguageModel } from "../providers";
 
 type RequestSuggestionsProps = {
-  session: NonNullable<AuthSession>;
+  session: Session;
   dataStream: UIMessageStreamWriter<ChatMessage>;
+  modelId: string;
 };
 
 export const requestSuggestions = ({
   session,
   dataStream,
+  modelId,
 }: RequestSuggestionsProps) =>
   tool({
     description:
@@ -35,15 +37,19 @@ export const requestSuggestions = ({
         };
       }
 
+      if (document.userId !== session.user?.id) {
+        return { error: "Forbidden" };
+      }
+
       const suggestions: Omit<
         Suggestion,
         "userId" | "createdAt" | "documentCreatedAt"
       >[] = [];
 
       const { partialOutputStream } = streamText({
-        model: getArtifactModel(),
+        model: getLanguageModel(modelId),
         system:
-          "You are a help writing assistant. Given a piece of writing, please offer suggestions to improve the piece of writing and describe the change. It is very important for the edits to contain full sentences instead of just words. Max 5 suggestions.",
+          "You are a writing assistant. Given a piece of writing, offer up to 5 suggestions to improve it. Each suggestion must contain full sentences, not just individual words. Describe what changed and why.",
         prompt: document.content,
         output: Output.array({
           element: z.object({

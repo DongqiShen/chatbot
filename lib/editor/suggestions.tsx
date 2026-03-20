@@ -1,13 +1,6 @@
 import type { Node } from "prosemirror-model";
 import { Plugin, PluginKey } from "prosemirror-state";
-import {
-  type Decoration,
-  DecorationSet,
-  type EditorView,
-} from "prosemirror-view";
-import { createRoot } from "react-dom/client";
-import type { ArtifactKind } from "@/components/artifact";
-import { Suggestion as PreviewSuggestion } from "@/components/suggestion";
+import { DecorationSet } from "prosemirror-view";
 import type { Suggestion } from "@/lib/db/schema";
 
 export interface UISuggestion extends Suggestion {
@@ -66,71 +59,6 @@ export function projectWithPositions(
   });
 }
 
-export function createSuggestionWidget(
-  suggestion: UISuggestion,
-  view: EditorView,
-  artifactKind: ArtifactKind = "text"
-): { dom: HTMLElement; destroy: () => void } {
-  const dom = document.createElement("span");
-  const root = createRoot(dom);
-
-  dom.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    view.dom.blur();
-  });
-
-  const onApply = () => {
-    const { state, dispatch } = view;
-
-    const decorationTransaction = state.tr;
-    const currentState = suggestionsPluginKey.getState(state);
-    const currentDecorations = currentState?.decorations;
-
-    if (currentDecorations) {
-      const newDecorations = DecorationSet.create(
-        state.doc,
-        currentDecorations.find().filter((decoration: Decoration) => {
-          return decoration.spec.suggestionId !== suggestion.id;
-        })
-      );
-
-      decorationTransaction.setMeta(suggestionsPluginKey, {
-        decorations: newDecorations,
-        selected: null,
-      });
-      dispatch(decorationTransaction);
-    }
-
-    const textTransaction = view.state.tr.replaceWith(
-      suggestion.selectionStart,
-      suggestion.selectionEnd,
-      state.schema.text(suggestion.suggestedText)
-    );
-
-    textTransaction.setMeta("no-debounce", true);
-
-    dispatch(textTransaction);
-  };
-
-  root.render(
-    <PreviewSuggestion
-      artifactKind={artifactKind}
-      onApply={onApply}
-      suggestion={suggestion}
-    />
-  );
-
-  return {
-    dom,
-    destroy: () => {
-      // Wrapping unmount in setTimeout to avoid synchronous unmounting during render
-      setTimeout(() => {
-        root.unmount();
-      }, 0);
-    },
-  };
-}
-
 export const suggestionsPluginKey = new PluginKey("suggestions");
 export const suggestionsPlugin = new Plugin({
   key: suggestionsPluginKey,
@@ -153,6 +81,16 @@ export const suggestionsPlugin = new Plugin({
   props: {
     decorations(state) {
       return this.getState(state)?.decorations ?? DecorationSet.empty;
+    },
+    handleDOMEvents: {
+      mousedown(_view, event) {
+        const target = event.target as HTMLElement;
+        if (target.closest(".suggestion-highlight")) {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      },
     },
   },
 });

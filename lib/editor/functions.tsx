@@ -8,7 +8,7 @@ import { renderToString } from "react-dom/server";
 import { MessageResponse } from "@/components/ai-elements/message";
 
 import { documentSchema } from "./config";
-import { createSuggestionWidget, type UISuggestion } from "./suggestions";
+import type { UISuggestion } from "./suggestions";
 
 export const buildDocumentFromContent = (content: string) => {
   const parser = DOMParser.fromSchema(documentSchema);
@@ -26,7 +26,7 @@ export const buildContentFromDocument = (document: Node) => {
 
 export const createDecorations = (
   suggestions: UISuggestion[],
-  view: EditorView
+  _view: EditorView
 ) => {
   const decorations: Decoration[] = [];
 
@@ -37,6 +37,7 @@ export const createDecorations = (
         suggestion.selectionEnd,
         {
           class: "suggestion-highlight",
+          "data-suggestion-id": suggestion.id,
         },
         {
           suggestionId: suggestion.id,
@@ -44,21 +45,7 @@ export const createDecorations = (
         }
       )
     );
-
-    decorations.push(
-      Decoration.widget(
-        suggestion.selectionStart,
-        (currentView) => {
-          const { dom } = createSuggestionWidget(suggestion, currentView);
-          return dom;
-        },
-        {
-          suggestionId: suggestion.id,
-          type: "widget",
-        }
-      )
-    );
   }
 
-  return DecorationSet.create(view.state.doc, decorations);
+  return DecorationSet.create(_view.state.doc, decorations);
 };

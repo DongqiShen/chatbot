@@ -73,54 +73,6 @@ const createMockModel = (): LanguageModel => {
   } as unknown as LanguageModel;
 };
 
-const createMockReasoningModel = (): LanguageModel => {
-  return {
-    specificationVersion: "v3",
-    provider: "mock",
-    modelId: "mock-reasoning-model",
-    defaultObjectGenerationMode: "tool",
-    supportedUrls: {},
-    doGenerate: async () => ({
-      finishReason: "stop",
-      usage: mockUsage,
-      content: [{ type: "text", text: "This is a reasoned response." }],
-      reasoning: [
-        { type: "text", text: "Let me think through this step by step..." },
-      ],
-      warnings: [],
-    }),
-    doStream: () => ({
-      stream: new ReadableStream({
-        async start(controller) {
-          controller.enqueue({ type: "reasoning-start", id: "r1" });
-          controller.enqueue({
-            type: "reasoning-delta",
-            id: "r1",
-            delta: "Let me think through this step by step... ",
-          });
-          controller.enqueue({ type: "reasoning-end", id: "r1" });
-          await new Promise((resolve) => {
-            setTimeout(resolve, 10);
-          });
-          controller.enqueue({ type: "text-start", id: "t1" });
-          controller.enqueue({
-            type: "text-delta",
-            id: "t1",
-            delta: "This is a reasoned response.",
-          });
-          controller.enqueue({ type: "text-end", id: "t1" });
-          controller.enqueue({
-            type: "finish",
-            finishReason: "stop",
-            usage: mockUsage,
-          });
-          controller.close();
-        },
-      }),
-    }),
-  } as unknown as LanguageModel;
-};
-
 const createMockTitleModel = (): LanguageModel => {
   return {
     specificationVersion: "v3",
@@ -168,6 +120,4 @@ const createMockTitleModel = (): LanguageModel => {
 };
 
 export const chatModel = createMockModel();
-export const reasoningModel = createMockReasoningModel();
 export const titleModel = createMockTitleModel();
-export const artifactModel = createMockModel();

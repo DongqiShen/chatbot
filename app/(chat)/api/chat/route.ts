@@ -10,15 +10,21 @@ import {
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
+import { auth, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import { allowedModelIds } from "@/lib/ai/models";
+import {
+  allowedModelIds,
+  chatModels,
+  DEFAULT_CHAT_MODEL,
+  getCapabilities,
+} from "@/lib/ai/models";
 import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
+import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
-import { getSession, getUserType, type UserType } from "@/lib/auth";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,
@@ -67,20 +73,20 @@ export async function POST(request: Request) {
 
     const [, session] = await Promise.all([
       checkBotId().catch(() => null),
-      getSession(),
+      auth(),
     ]);
 
     if (!session?.user) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    if (!allowedModelIds.has(selectedChatModel)) {
-      return new ChatbotError("bad_request:api").toResponse();
-    }
+    const chatModel = allowedModelIds.has(selectedChatModel)
+      ? selectedChatModel
+      : DEFAULT_CHAT_MODEL;
 
     await checkIpRateLimit(ipAddress(request));
 
-    const userType: UserType = getUserType(session.user);
+    const userType: UserType = session.user.type;
 
     const messageCount = await getMessageCountByUserId({
       id: session.user.id,
@@ -101,9 +107,7 @@ export async function POST(request: Request) {
       if (chat.userId !== session.user.id) {
         return new ChatbotError("forbidden:chat").toResponse();
       }
-      if (!isToolApprovalFlow) {
-        messagesFromDb = await getMessagesByChatId({ id });
-      }
+      messagesFromDb = await getMessagesByChatId({ id });
     } else if (message?.role === "user") {
       await saveChat({
         id,
@@ -114,9 +118,43 @@ export async function POST(request: Request) {
       titlePromise = generateTitleFromUserMessage({ message });
     }
 
-    const uiMessages = isToolApprovalFlow
-      ? (messages as ChatMessage[])
-      : [...convertToUIMessages(messagesFromDb), message as ChatMessage];
+    let uiMessages: ChatMessage[];
+
+    if (isToolApprovalFlow && messages) {
+      const dbMessages = convertToUIMessages(messagesFromDb);
+      const approvalStates = new Map(
+        messages.flatMap(
+          (m) =>
+            m.parts
+              ?.filter(
+                (p: Record<string, unknown>) =>
+                  p.state === "approval-responded" ||
+                  p.state === "output-denied"
+              )
+              .map((p: Record<string, unknown>) => [
+                String(p.toolCallId ?? ""),
+                p,
+              ]) ?? []
+        )
+      );
+      uiMessages = dbMessages.map((msg) => ({
+        ...msg,
+        parts: msg.parts.map((part) => {
+          if (
+            "toolCallId" in part &&
+            approvalStates.has(String(part.toolCallId))
+          ) {
+            return { ...part, ...approvalStates.get(String(part.toolCallId)) };
+          }
+          return part;
+        }),
+      })) as ChatMessage[];
+    } else {
+      uiMessages = [
+        ...convertToUIMessages(messagesFromDb),
+        message as ChatMessage,
+      ];
+    }
 
     const { longitude, latitude, city, country } = geolocation(request);
 
@@ -142,10 +180,11 @@ export async function POST(request: Request) {
       });
     }
 
-    const isReasoningModel =
-      selectedChatModel.endsWith("-thinking") ||
-      (selectedChatModel.includes("reasoning") &&
-        !selectedChatModel.includes("non-reasoning"));
+    const modelConfig = chatModels.find((m) => m.id === chatModel);
+    const modelCapabilities = await getCapabilities();
+    const capabilities = modelCapabilities[chatModel];
+    const isReasoningModel = capabilities?.reasoning === true;
+    const supportsTools = capabilities?.tools === true;
 
     const modelMessages = await convertToModelMessages(uiMessages);
 
@@ -153,30 +192,46 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const result = streamText({
-          model: getLanguageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
+          model: getLanguageModel(chatModel),
+          system: systemPrompt({ requestHints, supportsTools }),
           messages: modelMessages,
           stopWhen: stepCountIs(5),
-          experimental_activeTools: isReasoningModel
-            ? []
-            : [
-                "getWeather",
-                "createDocument",
-                "updateDocument",
-                "requestSuggestions",
-              ],
-          providerOptions: isReasoningModel
-            ? {
-                anthropic: {
-                  thinking: { type: "enabled", budgetTokens: 10_000 },
-                },
-              }
-            : undefined,
+          experimental_activeTools:
+            isReasoningModel && !supportsTools
+              ? []
+              : [
+                  "getWeather",
+                  "createDocument",
+                  "editDocument",
+                  "updateDocument",
+                  "requestSuggestions",
+                ],
+          providerOptions: {
+            ...(modelConfig?.gatewayOrder && {
+              gateway: { order: modelConfig.gatewayOrder },
+            }),
+            ...(modelConfig?.reasoningEffort && {
+              openai: { reasoningEffort: modelConfig.reasoningEffort },
+            }),
+          },
           tools: {
             getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({ session, dataStream }),
+            createDocument: createDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            editDocument: editDocument({ dataStream, session }),
+            updateDocument: updateDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            requestSuggestions: requestSuggestions({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
@@ -262,7 +317,7 @@ export async function POST(request: Request) {
             );
           }
         } catch (_) {
-          // ignore redis errors
+          /* non-critical */
         }
       },
     });
@@ -295,7 +350,7 @@ export async function DELETE(request: Request) {
     return new ChatbotError("bad_request:api").toResponse();
   }
 
-  const session = await getSession();
+  const session = await auth();
 
   if (!session?.user) {
     return new ChatbotError("unauthorized:chat").toResponse();

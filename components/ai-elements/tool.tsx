@@ -161,9 +161,7 @@ export const ToolOutput = ({
       <div
         className={cn(
           "overflow-x-auto rounded-md text-xs [&_table]:w-full",
-          errorText
-            ? "bg-destructive/10 text-destructive"
-            : "bg-muted/50 text-foreground"
+          errorText && "bg-destructive/10 text-destructive"
         )}
       >
         {errorText && <div>{errorText}</div>}

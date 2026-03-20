@@ -1,25 +1,34 @@
 import { tool, type UIMessageStreamWriter } from "ai";
+import type { Session } from "next-auth";
 import { z } from "zod";
 import {
   artifactKinds,
   documentHandlersByArtifactKind,
 } from "@/lib/artifacts/server";
-import type { AuthSession } from "@/lib/auth";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 
 type CreateDocumentProps = {
-  session: NonNullable<AuthSession>;
+  session: Session;
   dataStream: UIMessageStreamWriter<ChatMessage>;
+  modelId: string;
 };
 
-export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
+export const createDocument = ({
+  session,
+  dataStream,
+  modelId,
+}: CreateDocumentProps) =>
   tool({
     description:
-      "Create a document for a writing or content creation activities. This tool will call other functions that will generate the contents of the document based on the title and kind.",
+      "Create an artifact. You MUST specify kind: use 'code' for any programming/algorithm request (creates a script), 'text' for essays/writing (creates a document), 'sheet' for spreadsheets/data.",
     inputSchema: z.object({
-      title: z.string(),
-      kind: z.enum(artifactKinds),
+      title: z.string().describe("The title of the artifact"),
+      kind: z
+        .enum(artifactKinds)
+        .describe(
+          "REQUIRED. 'code' for programming/algorithms, 'text' for essays/writing, 'sheet' for spreadsheets"
+        ),
     }),
     execute: async ({ title, kind }) => {
       const id = generateUUID();
@@ -62,6 +71,7 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
         title,
         dataStream,
         session,
+        modelId,
       });
 
       dataStream.write({ type: "data-finish", data: null, transient: true });
@@ -70,7 +80,10 @@ export const createDocument = ({ session, dataStream }: CreateDocumentProps) =>
         id,
         title,
         kind,
-        content: "A document was created and is now visible to the user.",
+        content:
+          kind === "code"
+            ? "A script was created and is now visible to the user."
+            : "A document was created and is now visible to the user.",
       };
     },
   });
