@@ -1,43 +1,32 @@
-import { Output, streamText, tool, type UIMessageStreamWriter } from "ai";
-import type { Session } from "next-auth";
+import { tool } from "@openai/agents";
+import { Output, streamText } from "ai";
 import { z } from "zod";
+import { getLanguageModel } from "@/agents/providers";
 import { getDocumentById, saveSuggestions } from "@/lib/db/queries";
 import type { Suggestion } from "@/lib/db/schema";
-import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
-import { getLanguageModel } from "../providers";
+import type { AgentRuntimeContext } from "@/agents/types/context";
 
-type RequestSuggestionsProps = {
-  session: Session;
-  dataStream: UIMessageStreamWriter<ChatMessage>;
-  modelId: string;
-};
-
-export const requestSuggestions = ({
-  session,
-  dataStream,
-  modelId,
-}: RequestSuggestionsProps) =>
-  tool({
+export function createRequestSuggestionsAgentTool(
+  context: AgentRuntimeContext
+) {
+  return tool({
+    name: "requestSuggestions",
     description:
-      "Request writing suggestions for an existing document artifact. Only use this when the user explicitly asks to improve or get suggestions for a document they have already created. Never use for general questions.",
-    inputSchema: z.object({
+      "Generate writing suggestions for an existing document artifact when the user explicitly asks for improvements.",
+    parameters: z.object({
       documentId: z
         .string()
-        .describe(
-          "The UUID of an existing document artifact that was previously created with createDocument"
-        ),
+        .describe("The ID of an existing document artifact"),
     }),
-    execute: async ({ documentId }) => {
+    async execute({ documentId }) {
       const document = await getDocumentById({ id: documentId });
 
       if (!document || !document.content) {
-        return {
-          error: "Document not found",
-        };
+        return { error: "Document not found" };
       }
 
-      if (document.userId !== session.user?.id) {
+      if (document.userId !== context.session.user?.id) {
         return { error: "Forbidden" };
       }
 
@@ -47,17 +36,15 @@ export const requestSuggestions = ({
       >[] = [];
 
       const { partialOutputStream } = streamText({
-        model: getLanguageModel(modelId),
+        model: getLanguageModel(context.selectedModel),
         system:
           "You are a writing assistant. Given a piece of writing, offer up to 5 suggestions to improve it. Each suggestion must contain full sentences, not just individual words. Describe what changed and why.",
         prompt: document.content,
         output: Output.array({
           element: z.object({
-            originalSentence: z.string().describe("The original sentence"),
-            suggestedSentence: z.string().describe("The suggested sentence"),
-            description: z
-              .string()
-              .describe("The description of the suggestion"),
+            originalSentence: z.string(),
+            suggestedSentence: z.string(),
+            description: z.string(),
           }),
         }),
       });
@@ -70,6 +57,7 @@ export const requestSuggestions = ({
 
         for (let i = processedCount; i < partialOutput.length; i++) {
           const element = partialOutput[i];
+
           if (
             !element?.originalSentence ||
             !element?.suggestedSentence ||
@@ -78,33 +66,23 @@ export const requestSuggestions = ({
             continue;
           }
 
-          const suggestion = {
+          suggestions.push({
             originalText: element.originalSentence,
             suggestedText: element.suggestedSentence,
             description: element.description,
             id: generateUUID(),
             documentId,
             isResolved: false,
-          };
-
-          dataStream.write({
-            type: "data-suggestion",
-            data: suggestion as Suggestion,
-            transient: true,
           });
-
-          suggestions.push(suggestion);
           processedCount++;
         }
       }
 
-      if (session.user?.id) {
-        const userId = session.user.id;
-
+      if (context.session.user?.id) {
         await saveSuggestions({
           suggestions: suggestions.map((suggestion) => ({
             ...suggestion,
-            userId,
+            userId: context.session.user.id,
             createdAt: new Date(),
             documentCreatedAt: document.createdAt,
           })),
@@ -114,8 +92,9 @@ export const requestSuggestions = ({
       return {
         id: documentId,
         title: document.title,
-        kind: document.kind,
+        kind: document.kind === "image" ? "text" : document.kind,
         message: "Suggestions have been added to the document",
       };
     },
   });
+}

@@ -1,56 +1,60 @@
-import { tool, type UIMessageStreamWriter } from "ai";
-import type { Session } from "next-auth";
+import { tool } from "@openai/agents";
+import type { UIMessageStreamWriter } from "ai";
 import { z } from "zod";
 import {
   artifactKinds,
   documentHandlersByArtifactKind,
-} from "@/lib/artifacts/server";
+} from "@/agents/artifacts/server";
+import {
+  type AgentRuntimeContext,
+} from "@/agents/types/context";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 
-type CreateDocumentProps = {
-  session: Session;
-  dataStream: UIMessageStreamWriter<ChatMessage>;
-  modelId: string;
-};
+function getDataStream(
+  streamWriter?: UIMessageStreamWriter<ChatMessage>
+): UIMessageStreamWriter<ChatMessage> {
+  if (streamWriter) {
+    return streamWriter;
+  }
 
-export const createDocument = ({
-  session,
-  dataStream,
-  modelId,
-}: CreateDocumentProps) =>
-  tool({
+  return {
+    write() {},
+    merge() {},
+    onError() {},
+  } as UIMessageStreamWriter<ChatMessage>;
+}
+
+export function createCreateDocumentAgentTool(context: AgentRuntimeContext) {
+  return tool({
+    name: "createDocument",
     description:
-      "Create an artifact. You MUST specify kind: use 'code' for any programming/algorithm request (creates a script), 'text' for essays/writing (creates a document), 'sheet' for spreadsheets/data.",
-    inputSchema: z.object({
+      "Create an artifact. Use kind='code' for programming, kind='text' for prose, and kind='sheet' for spreadsheets.",
+    parameters: z.object({
       title: z.string().describe("The title of the artifact"),
       kind: z
         .enum(artifactKinds)
-        .describe(
-          "REQUIRED. 'code' for programming/algorithms, 'text' for essays/writing, 'sheet' for spreadsheets"
-        ),
+        .describe("Artifact kind: code, text, or sheet"),
     }),
-    execute: async ({ title, kind }) => {
+    async execute({ title, kind }) {
       const id = generateUUID();
+      const dataStream = getDataStream(context.streamWriter);
 
       dataStream.write({
         type: "data-kind",
         data: kind,
         transient: true,
       });
-
       dataStream.write({
         type: "data-id",
         data: id,
         transient: true,
       });
-
       dataStream.write({
         type: "data-title",
         data: title,
         transient: true,
       });
-
       dataStream.write({
         type: "data-clear",
         data: null,
@@ -58,23 +62,28 @@ export const createDocument = ({
       });
 
       const documentHandler = documentHandlersByArtifactKind.find(
-        (documentHandlerByArtifactKind) =>
-          documentHandlerByArtifactKind.kind === kind
+        (handler) => handler.kind === kind
       );
 
       if (!documentHandler) {
-        throw new Error(`No document handler found for kind: ${kind}`);
+        return {
+          error: `No document handler found for kind: ${kind}`,
+        };
       }
 
       await documentHandler.onCreateDocument({
         id,
         title,
         dataStream,
-        session,
-        modelId,
+        session: context.session,
+        modelId: context.selectedModel,
       });
 
-      dataStream.write({ type: "data-finish", data: null, transient: true });
+      dataStream.write({
+        type: "data-finish",
+        data: null,
+        transient: true,
+      });
 
       return {
         id,
@@ -87,3 +96,4 @@ export const createDocument = ({
       };
     },
   });
+}

@@ -1,12 +1,12 @@
 import type { UIMessageStreamWriter } from "ai";
 import type { Session } from "next-auth";
-import { codeDocumentHandler } from "@/artifacts/code/server";
-import { sheetDocumentHandler } from "@/artifacts/sheet/server";
-import { textDocumentHandler } from "@/artifacts/text/server";
+import { codeDocumentHandler } from "@/agents/artifacts/code/server";
+import { sheetDocumentHandler } from "@/agents/artifacts/sheet/server";
+import { textDocumentHandler } from "@/agents/artifacts/text/server";
 import type { ArtifactKind } from "@/components/chat/artifact";
-import { saveDocument } from "../db/queries";
-import type { Document } from "../db/schema";
-import type { ChatMessage } from "../types";
+import { saveDocument } from "@/lib/db/queries";
+import type { Document } from "@/lib/db/schema";
+import type { ChatMessage } from "@/lib/types";
 
 export type SaveDocumentProps = {
   id: string;
@@ -63,8 +63,6 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
           userId: args.session.user.id,
         });
       }
-
-      return;
     },
     onUpdateDocument: async (args: UpdateDocumentCallbackProps) => {
       const draftContent = await config.onUpdateDocument({
@@ -84,8 +82,6 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
           userId: args.session.user.id,
         });
       }
-
-      return;
     },
   };
 }

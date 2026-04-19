@@ -1,41 +1,48 @@
-import { tool, type UIMessageStreamWriter } from "ai";
-import type { Session } from "next-auth";
+import { tool } from "@openai/agents";
+import type { UIMessageStreamWriter } from "ai";
 import { z } from "zod";
 import { getDocumentById, saveDocument } from "@/lib/db/queries";
 import type { ChatMessage } from "@/lib/types";
+import type { AgentRuntimeContext } from "@/agents/types/context";
 
-type EditDocumentProps = {
-  session: Session;
-  dataStream: UIMessageStreamWriter<ChatMessage>;
-};
+function getDataStream(
+  streamWriter?: UIMessageStreamWriter<ChatMessage>
+): UIMessageStreamWriter<ChatMessage> {
+  if (streamWriter) {
+    return streamWriter;
+  }
 
-export const editDocument = ({ session, dataStream }: EditDocumentProps) =>
-  tool({
+  return {
+    write() {},
+    merge() {},
+    onError() {},
+  } as UIMessageStreamWriter<ChatMessage>;
+}
+
+export function createEditDocumentAgentTool(context: AgentRuntimeContext) {
+  return tool({
+    name: "editDocument",
     description:
-      "Make a targeted edit to an existing artifact by finding and replacing an exact string. Preferred over updateDocument for small changes. The old_string must match exactly.",
-    inputSchema: z.object({
+      "Perform a targeted edit on an existing artifact by replacing an exact string.",
+    parameters: z.object({
       id: z.string().describe("The ID of the artifact to edit"),
       old_string: z
         .string()
-        .describe(
-          "Exact string to find. Include 3-5 surrounding lines for uniqueness."
-        ),
+        .describe("Exact string to find, ideally with surrounding context"),
       new_string: z.string().describe("Replacement string"),
       replace_all: z
         .boolean()
         .optional()
-        .describe(
-          "Replace all occurrences instead of just the first (default false)"
-        ),
+        .describe("Replace all occurrences instead of just the first"),
     }),
-    execute: async ({ id, old_string, new_string, replace_all }) => {
+    async execute({ id, old_string, new_string, replace_all }) {
       const document = await getDocumentById({ id });
 
       if (!document) {
         return { error: "Document not found" };
       }
 
-      if (document.userId !== session.user?.id) {
+      if (document.userId !== context.session.user?.id) {
         return { error: "Forbidden" };
       }
 
@@ -58,6 +65,8 @@ export const editDocument = ({ session, dataStream }: EditDocumentProps) =>
         content: updated,
         userId: document.userId,
       });
+
+      const dataStream = getDataStream(context.streamWriter);
 
       dataStream.write({
         type: "data-clear",
@@ -85,7 +94,11 @@ export const editDocument = ({ session, dataStream }: EditDocumentProps) =>
         });
       }
 
-      dataStream.write({ type: "data-finish", data: null, transient: true });
+      dataStream.write({
+        type: "data-finish",
+        data: null,
+        transient: true,
+      });
 
       return {
         id,
@@ -98,3 +111,4 @@ export const editDocument = ({ session, dataStream }: EditDocumentProps) =>
       };
     },
   });
+}

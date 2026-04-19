@@ -18,11 +18,11 @@ import {
 import useSWR, { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
 import { useDataStream } from "@/components/chat/data-stream-provider";
+import { DEFAULT_CHAT_MODEL } from "@/config/chat-models";
 import { getChatHistoryPaginationKey } from "@/components/chat/sidebar-history";
 import { toast } from "@/components/chat/toast";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
-import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { Vote } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
@@ -81,6 +81,15 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   const [input, setInput] = useState("");
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
+  const { data: modelsData } = useSWR(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
+  );
+  const fixedModelId: string | undefined =
+    Array.isArray(modelsData?.models) && modelsData.models.length === 1
+      ? modelsData.defaultModelId
+      : undefined;
 
   const { data: chatData, isLoading } = useSWR(
     isNewChat
@@ -199,6 +208,11 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (chatData && !isNewChat) {
+      if (fixedModelId) {
+        setCurrentModelId(fixedModelId);
+        return;
+      }
+
       const cookieModel = document.cookie
         .split("; ")
         .find((row) => row.startsWith("chat-model="))
@@ -207,7 +221,15 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
         setCurrentModelId(decodeURIComponent(cookieModel));
       }
     }
-  }, [chatData, isNewChat]);
+  }, [chatData, fixedModelId, isNewChat]);
+
+  useEffect(() => {
+    if (!fixedModelId) {
+      return;
+    }
+
+    setCurrentModelId(fixedModelId);
+  }, [fixedModelId]);
 
   const hasAppendedQueryRef = useRef(false);
   useEffect(() => {

@@ -1,10 +1,6 @@
-import type { InferUITool, UIMessage } from "ai";
+import type { UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/chat/artifact";
-import type { createDocument } from "./ai/tools/create-document";
-import type { getWeather } from "./ai/tools/get-weather";
-import type { requestSuggestions } from "./ai/tools/request-suggestions";
-import type { updateDocument } from "./ai/tools/update-document";
 import type { Suggestion } from "./db/schema";
 
 export const messageMetadataSchema = z.object({
@@ -13,18 +9,110 @@ export const messageMetadataSchema = z.object({
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
-type weatherTool = InferUITool<typeof getWeather>;
-type createDocumentTool = InferUITool<ReturnType<typeof createDocument>>;
-type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
-type requestSuggestionsTool = InferUITool<
-  ReturnType<typeof requestSuggestions>
->;
-
 export type ChatTools = {
-  getWeather: weatherTool;
-  createDocument: createDocumentTool;
-  updateDocument: updateDocumentTool;
-  requestSuggestions: requestSuggestionsTool;
+  getWeather: {
+    input: {
+      latitude?: number;
+      longitude?: number;
+      city?: string;
+    };
+    output:
+      | {
+          error: string;
+        }
+      | {
+          latitude: number;
+          longitude: number;
+          generationtime_ms: number;
+          utc_offset_seconds: number;
+          timezone: string;
+          timezone_abbreviation: string;
+          elevation: number;
+          cityName?: string;
+          current_units: {
+            time: string;
+            interval: string;
+            temperature_2m: string;
+          };
+          current: {
+            time: string;
+            interval: number;
+            temperature_2m: number;
+          };
+          hourly_units: {
+            time: string;
+            temperature_2m: string;
+          };
+          hourly: {
+            time: string[];
+            temperature_2m: number[];
+          };
+          daily_units: {
+            time: string;
+            sunrise: string;
+            sunset: string;
+          };
+          daily: {
+            time: string[];
+            sunrise: string[];
+            sunset: string[];
+          };
+        };
+  };
+  createDocument: {
+    input: {
+      title: string;
+      kind: Extract<ArtifactKind, "text" | "code" | "sheet">;
+    };
+    output:
+      | {
+          error: string;
+        }
+      | {
+          id: string;
+          title: string;
+          kind: ArtifactKind;
+          content: string;
+        };
+  };
+  updateDocument: {
+    input:
+      | {
+          id: string;
+          description: string;
+        }
+      | {
+          id: string;
+          old_string: string;
+          new_string: string;
+          replace_all?: boolean;
+        };
+    output:
+      | {
+          error: string;
+        }
+      | {
+          id: string;
+          title: string;
+          kind: ArtifactKind;
+          content: string;
+        };
+  };
+  requestSuggestions: {
+    input: {
+      documentId: string;
+    };
+    output:
+      | {
+          error: string;
+        }
+      | {
+          id: string;
+          title: string;
+          kind: ArtifactKind;
+          message: string;
+        };
+  };
 };
 
 export type CustomUIDataTypes = {

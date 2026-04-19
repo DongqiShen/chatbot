@@ -1,30 +1,28 @@
 import { geolocation, ipAddress } from "@vercel/functions";
 import {
-  convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateId,
-  stepCountIs,
-  streamText,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
+import { RunState, run, type RunToolApprovalItem } from "@openai/agents";
+import { runChatAgent } from "@/agents";
+import { createAgentsUiMessageStream } from "@/agents/bridge/ai-sdk-ui";
+import { createChatAgentDefinition } from "@/agents/definitions/chat-agent";
 import {
-  allowedModelIds,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  getCapabilities,
-} from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
-import { getLanguageModel } from "@/lib/ai/providers";
-import { createDocument } from "@/lib/ai/tools/create-document";
-import { editDocument } from "@/lib/ai/tools/edit-document";
-import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { updateDocument } from "@/lib/ai/tools/update-document";
+  createRunStateAttachment,
+  findLatestRunStateMessage,
+} from "@/agents/state/run-state-attachment";
+import { serializeAgentRunResultToMessage } from "@/agents/state/serialize-run-result";
+import type { RequestHints } from "@/agents/types/request-hints";
+import { auth, type UserType } from "@/app/(auth)/auth";
+import {
+  getAllowedModelIds,
+  getDefaultChatModelId,
+} from "@/agents/config/model-config";
+import { entitlementsByUserType } from "@/config/entitlements";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,
@@ -47,6 +45,18 @@ import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
 
+function getApprovalIdentity(rawItem: Record<string, unknown>) {
+  if (typeof rawItem.id === "string") {
+    return rawItem.id;
+  }
+
+  if (typeof rawItem.callId === "string") {
+    return rawItem.callId;
+  }
+
+  return null;
+}
+
 function getStreamContext() {
   try {
     return createResumableStreamContext({ waitUntil: after });
@@ -56,6 +66,30 @@ function getStreamContext() {
 }
 
 export { getStreamContext };
+
+function createResumableResponse(
+  chatId: string,
+  stream: ReadableStream<any>
+) {
+  return createUIMessageStreamResponse({
+    stream,
+    async consumeSseStream({ stream: sseStream }) {
+      if (!process.env.REDIS_URL) {
+        return;
+      }
+      try {
+        const streamContext = getStreamContext();
+        if (streamContext) {
+          const streamId = generateId();
+          await createStreamId({ streamId, chatId });
+          await streamContext.createNewResumableStream(streamId, () => sseStream);
+        }
+      } catch (_) {
+        /* non-critical */
+      }
+    },
+  });
+}
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
@@ -80,21 +114,24 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
+    const allowedModelIds = getAllowedModelIds();
     const chatModel = allowedModelIds.has(selectedChatModel)
       ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
+      : getDefaultChatModelId();
 
     await checkIpRateLimit(ipAddress(request));
 
     const userType: UserType = session.user.type;
 
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 1,
-    });
+    if (isProductionEnvironment) {
+      const messageCount = await getMessageCountByUserId({
+        id: session.user.id,
+        differenceInHours: 1,
+      });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
-      return new ChatbotError("rate_limit:chat").toResponse();
+      if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
+        return new ChatbotError("rate_limit:chat").toResponse();
+      }
     }
 
     const isToolApprovalFlow = Boolean(messages);
@@ -180,147 +217,187 @@ export async function POST(request: Request) {
       });
     }
 
-    const modelConfig = chatModels.find((m) => m.id === chatModel);
-    const modelCapabilities = await getCapabilities();
-    const capabilities = modelCapabilities[chatModel];
-    const isReasoningModel = capabilities?.reasoning === true;
-    const supportsTools = capabilities?.tools === true;
+    const latestRunStateMessage = findLatestRunStateMessage(messagesFromDb);
+    if (isToolApprovalFlow) {
+      if (!latestRunStateMessage) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
 
-    const modelMessages = await convertToModelMessages(uiMessages);
+      const agent = createChatAgentDefinition({
+        chatId: id,
+        session,
+        selectedModel: chatModel,
+        requestHints,
+        messagesFromDb,
+      });
+
+      const state = await RunState.fromString(
+        agent,
+        latestRunStateMessage.attachment.state
+      );
+
+      const decisions = new Map<
+        string,
+        { approved: boolean; reason?: string | undefined }
+      >();
+
+      for (const currentMessage of messages ?? []) {
+        for (const part of currentMessage.parts ?? []) {
+          const approval = (part as { approval?: { id?: string; approved?: boolean } })
+            .approval;
+
+          if (
+            typeof approval?.id === "string" &&
+            typeof approval.approved === "boolean"
+          ) {
+            decisions.set(approval.id, {
+              approved: approval.approved,
+              reason:
+                typeof (part as { approval?: { reason?: string } }).approval?.reason ===
+                "string"
+                  ? (part as { approval?: { reason?: string } }).approval?.reason
+                  : undefined,
+            });
+          }
+        }
+      }
+
+      for (const interruption of state.getInterruptions()) {
+        const approvalId = getApprovalIdentity(
+          interruption.rawItem as Record<string, unknown>
+        );
+
+        if (!approvalId) {
+          continue;
+        }
+
+        const decision = decisions.get(approvalId);
+        if (!decision) {
+          continue;
+        }
+
+        if (decision.approved) {
+          state.approve(interruption as RunToolApprovalItem);
+        } else {
+          state.reject(interruption as RunToolApprovalItem, {
+            message: decision.reason,
+          });
+        }
+      }
+
+      let resumedStreamPromise: Promise<Awaited<ReturnType<typeof run>>> | null =
+        null;
+
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          resumedStreamPromise = run(agent, state, {
+            stream: true,
+          });
+
+          const resumedStream = await resumedStreamPromise;
+          writer.merge(createAgentsUiMessageStream(resumedStream));
+        },
+      });
+
+      after(async () => {
+        try {
+          const resumedStream = await resumedStreamPromise;
+          if (!resumedStream) {
+            return;
+          }
+
+          await resumedStream.completed;
+
+          const serializedMessage = serializeAgentRunResultToMessage(
+            resumedStream,
+            {
+              existingMessage: latestRunStateMessage.message,
+            }
+          );
+
+          if (!serializedMessage) {
+            return;
+          }
+
+          await updateMessage({
+            id: latestRunStateMessage.message.id,
+            parts: serializedMessage.parts,
+            attachments: [
+              createRunStateAttachment(resumedStream.state.toString()),
+            ],
+          });
+        } catch (error) {
+          console.error("Failed to persist resumed OpenAI Agents response:", error);
+        }
+      });
+
+      return createResumableResponse(id, stream);
+    }
+
+    let agentRunPromise:
+      | ReturnType<typeof runChatAgent>
+      | null = null;
 
     const stream = createUIMessageStream({
-      originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const result = streamText({
-          model: getLanguageModel(chatModel),
-          system: systemPrompt({ requestHints, supportsTools }),
-          messages: modelMessages,
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            isReasoningModel && !supportsTools
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          providerOptions: {
-            ...(modelConfig?.gatewayOrder && {
-              gateway: { order: modelConfig.gatewayOrder },
-            }),
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
-            }),
-          },
-          tools: {
-            getWeather,
-            createDocument: createDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            editDocument: editDocument({ dataStream, session }),
-            updateDocument: updateDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
+      execute: async ({ writer }) => {
+        agentRunPromise = runChatAgent({
+          chatId: id,
+          session,
+          selectedModel: chatModel,
+          requestHints,
+          messagesFromDb,
+          incomingMessage: message,
+          streamWriter: writer,
         });
 
-        dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel })
-        );
+        const agentRun = await agentRunPromise;
+
+        if (!agentRun.stream) {
+          throw new Error("OpenAI Agents runtime did not return a stream");
+        }
+
+        writer.merge(createAgentsUiMessageStream(agentRun.stream));
+      },
+      generateId: generateUUID,
+    });
+
+    after(async () => {
+      try {
+        const agentRun = await agentRunPromise;
+        if (!agentRun?.stream) {
+          return;
+        }
+
+        await agentRun.stream.completed;
+        const serializedMessage = serializeAgentRunResultToMessage(agentRun.stream);
 
         if (titlePromise) {
           const title = await titlePromise;
-          dataStream.write({ type: "data-chat-title", data: title });
-          updateChatTitleById({ chatId: id, title });
+          await updateChatTitleById({ chatId: id, title });
         }
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages: finishedMessages }) => {
-        if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
-            const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
-            if (existingMsg) {
-              await updateMessage({
-                id: finishedMsg.id,
-                parts: finishedMsg.parts,
-              });
-            } else {
-              await saveMessages({
-                messages: [
-                  {
-                    id: finishedMsg.id,
-                    role: finishedMsg.role,
-                    parts: finishedMsg.parts,
-                    createdAt: new Date(),
-                    attachments: [],
-                    chatId: id,
-                  },
-                ],
-              });
-            }
-          }
-        } else if (finishedMessages.length > 0) {
-          await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
-              id: currentMessage.id,
-              role: currentMessage.role,
-              parts: currentMessage.parts,
-              createdAt: new Date(),
-              attachments: [],
-              chatId: id,
-            })),
-          });
-        }
-      },
-      onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests"
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
-      },
-    });
 
-    return createUIMessageStreamResponse({
-      stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
+        if (!serializedMessage) {
           return;
         }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
-          }
-        } catch (_) {
-          /* non-critical */
-        }
-      },
+
+        await saveMessages({
+          messages: [
+            {
+              id: serializedMessage.id,
+              role: serializedMessage.role,
+              parts: serializedMessage.parts,
+              createdAt: new Date(),
+              attachments: [createRunStateAttachment(agentRun.stream.state.toString())],
+              chatId: id,
+            },
+          ],
+        });
+      } catch (error) {
+        console.error("Failed to persist OpenAI Agents response:", error);
+      }
     });
+
+    return createResumableResponse(id, stream);
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");
 
