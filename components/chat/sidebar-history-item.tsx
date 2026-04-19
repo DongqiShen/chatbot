@@ -1,7 +1,10 @@
 import Link from "next/link";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
-import type { Chat } from "@/lib/db/schema";
+import {
+  NEW_CHAT_TITLE,
+  type SidebarChat,
+} from "@/components/chat/sidebar-history";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +24,7 @@ import {
   CheckCircleFillIcon,
   GlobeIcon,
   LockIcon,
+  LoaderIcon,
   MoreHorizontalIcon,
   ShareIcon,
   TrashIcon,
@@ -32,15 +36,49 @@ const PureChatItem = ({
   onDelete,
   setOpenMobile,
 }: {
-  chat: Chat;
+  chat: SidebarChat;
   isActive: boolean;
   onDelete: (chatId: string) => void;
   setOpenMobile: (open: boolean) => void;
 }) => {
+  const [isPendingTitleExpired, setIsPendingTitleExpired] = useState(() => {
+    if (!chat.pendingTitleUntil || chat.title !== NEW_CHAT_TITLE) {
+      return true;
+    }
+
+    return Date.now() >= chat.pendingTitleUntil;
+  });
+
+  useEffect(() => {
+    if (!chat.pendingTitleUntil || chat.title !== NEW_CHAT_TITLE) {
+      setIsPendingTitleExpired(true);
+      return;
+    }
+
+    const remainingMs = chat.pendingTitleUntil - Date.now();
+
+    if (remainingMs <= 0) {
+      setIsPendingTitleExpired(true);
+      return;
+    }
+
+    setIsPendingTitleExpired(false);
+
+    const timeoutId = window.setTimeout(() => {
+      setIsPendingTitleExpired(true);
+    }, remainingMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [chat.pendingTitleUntil, chat.title]);
+
   const { visibilityType, setVisibilityType } = useChatVisibility({
     chatId: chat.id,
     initialVisibilityType: chat.visibility,
   });
+  const isPendingTitle =
+    chat.title === NEW_CHAT_TITLE &&
+    Boolean(chat.pendingTitleUntil) &&
+    !isPendingTitleExpired;
 
   return (
     <SidebarMenuItem>
@@ -49,8 +87,22 @@ const PureChatItem = ({
         className="h-8 rounded-none text-[13px] text-sidebar-foreground/50 transition-all duration-150 hover:bg-transparent hover:text-sidebar-foreground data-active:bg-transparent data-active:font-normal data-active:text-sidebar-foreground/50 data-[active=true]:text-sidebar-foreground data-[active=true]:font-medium data-[active=true]:border-b data-[active=true]:border-dashed data-[active=true]:border-sidebar-foreground/50"
         isActive={isActive}
       >
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+        <Link
+          className="flex min-w-0 items-center gap-2"
+          href={`/chat/${chat.id}`}
+          onClick={() => setOpenMobile(false)}
+        >
           <span className="truncate">{chat.title}</span>
+          {isPendingTitle ? (
+            <span
+              aria-label="Generating chat title"
+              className="flex size-3 shrink-0 items-center justify-center text-sidebar-foreground/35"
+            >
+              <span className="animate-spin">
+                <LoaderIcon size={12} />
+              </span>
+            </span>
+          ) : null}
         </Link>
       </SidebarMenuButton>
 
@@ -120,5 +172,22 @@ export const ChatItem = memo(PureChatItem, (prevProps, nextProps) => {
   if (prevProps.isActive !== nextProps.isActive) {
     return false;
   }
+
+  if (prevProps.chat.id !== nextProps.chat.id) {
+    return false;
+  }
+
+  if (prevProps.chat.title !== nextProps.chat.title) {
+    return false;
+  }
+
+  if (prevProps.chat.visibility !== nextProps.chat.visibility) {
+    return false;
+  }
+
+  if (prevProps.chat.pendingTitleUntil !== nextProps.chat.pendingTitleUntil) {
+    return false;
+  }
+
   return true;
 });

@@ -30,21 +30,28 @@ import { LoaderIcon } from "./icons";
 import { ChatItem } from "./sidebar-history-item";
 
 type GroupedChats = {
-  today: Chat[];
-  yesterday: Chat[];
-  lastWeek: Chat[];
-  lastMonth: Chat[];
-  older: Chat[];
+  today: SidebarChat[];
+  yesterday: SidebarChat[];
+  lastWeek: SidebarChat[];
+  lastMonth: SidebarChat[];
+  older: SidebarChat[];
+};
+
+export const NEW_CHAT_TITLE = "New chat";
+export const PENDING_CHAT_TITLE_TIMEOUT_MS = 8000;
+
+export type SidebarChat = Chat & {
+  pendingTitleUntil?: number;
 };
 
 export type ChatHistory = {
-  chats: Chat[];
+  chats: SidebarChat[];
   hasMore: boolean;
 };
 
 const PAGE_SIZE = 20;
 
-const groupChatsByDate = (chats: Chat[]): GroupedChats => {
+const groupChatsByDate = (chats: SidebarChat[]): GroupedChats => {
   const now = new Date();
   const oneWeekAgo = subWeeks(now, 1);
   const oneMonthAgo = subMonths(now, 1);
