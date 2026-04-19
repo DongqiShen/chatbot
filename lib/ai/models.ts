@@ -1,12 +1,5 @@
 export const DEFAULT_CHAT_MODEL = "moonshotai/kimi-k2-0905";
 
-export const titleModel = {
-  id: "mistral/mistral-small",
-  name: "Mistral Small",
-  provider: "mistral",
-  description: "Fast model for title generation",
-};
-
 export type ModelCapabilities = {
   tools: boolean;
   vision: boolean;
@@ -20,28 +13,12 @@ export type ChatModel = {
   description: string;
 };
 
-const defaultCapabilities: ModelCapabilities = {
-  tools: true,
-  vision: false,
-  reasoning: false,
-};
-
-export function getConfiguredChatModel(): ChatModel | null {
-  const configuredModelId = process.env.OPENAI_MODEL;
-
-  if (!configuredModelId) {
-    return null;
-  }
-
-  const [provider = "openai-compatible"] = configuredModelId.split("/");
-
-  return {
-    id: configuredModelId,
-    name: configuredModelId,
-    provider,
-    description: "Configured via OPENAI_MODEL",
-  };
-}
+export const titleModel = {
+  id: "mistral/mistral-small",
+  name: "Mistral Small",
+  provider: "mistral",
+  description: "Fast model for title generation",
+} satisfies ChatModel;
 
 export const chatModels: ChatModel[] = [
   {
@@ -93,31 +70,3 @@ export const chatModels: ChatModel[] = [
     description: "Fast non-reasoning model with tool use",
   },
 ];
-
-export function getActiveModels(): ChatModel[] {
-  const configuredChatModel = getConfiguredChatModel();
-
-  if (configuredChatModel) {
-    return [configuredChatModel];
-  }
-
-  return chatModels;
-}
-
-export function getDefaultChatModelId() {
-  return getConfiguredChatModel()?.id ?? DEFAULT_CHAT_MODEL;
-}
-
-export function getModelCapabilitiesMap(
-  models: ChatModel[] = getActiveModels()
-): Record<string, ModelCapabilities> {
-  return Object.fromEntries(
-    models.map((model) => [model.id, defaultCapabilities])
-  );
-}
-
-export const allowedModelIds = new Set(
-  [...chatModels.map((model) => model.id), process.env.OPENAI_MODEL]
-    .filter(Boolean)
-    .map((model) => model as string)
-);

@@ -2,7 +2,7 @@ import {
   getActiveModels,
   getDefaultChatModelId,
   getModelCapabilitiesMap,
-} from "@/lib/ai/models";
+} from "@/config/model-config";
 
 export async function GET() {
   const headers = {

@@ -17,8 +17,11 @@ import {
 } from "@/agents/state/run-state-attachment";
 import { serializeAgentRunResultToMessage } from "@/agents/state/serialize-run-result";
 import { auth, type UserType } from "@/app/(auth)/auth";
+import {
+  getAllowedModelIds,
+  getDefaultChatModelId,
+} from "@/config/model-config";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { RequestHints } from "@/lib/ai/prompts";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
@@ -111,9 +114,10 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
+    const allowedModelIds = getAllowedModelIds();
     const chatModel = allowedModelIds.has(selectedChatModel)
       ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
+      : getDefaultChatModelId();
 
     await checkIpRateLimit(ipAddress(request));
 

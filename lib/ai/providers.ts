@@ -1,7 +1,10 @@
 import { customProvider } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import {
+  getConfiguredTitleModelId,
+  resolveConfiguredLanguageModelId,
+} from "@/config/model-config";
 import { isTestEnvironment } from "../constants";
-import { titleModel } from "./models";
 
 export const myProvider = isTestEnvironment
   ? (() => {
@@ -46,10 +49,6 @@ function getConfiguredOpenAICompatibleProvider() {
   return compatibleProvider;
 }
 
-export function resolveConfiguredLanguageModelId(modelId: string) {
-  return process.env.OPENAI_MODEL || modelId;
-}
-
 export function isUsingConfiguredLanguageModel(modelId: string) {
   return resolveConfiguredLanguageModelId(modelId) !== modelId;
 }
@@ -83,7 +82,7 @@ export function getTitleModel() {
   }
 
   const configuredProvider = getRequiredCompatibleProvider();
-  const resolvedModelId = resolveConfiguredLanguageModelId(titleModel.id);
+  const resolvedModelId = getConfiguredTitleModelId();
 
   return configuredProvider.chatModel(resolvedModelId);
 }
