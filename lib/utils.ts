@@ -17,8 +17,18 @@ export const fetcher = async (url: string) => {
   const response = await fetch(url);
 
   if (!response.ok) {
-    const { code, cause } = await response.json();
-    throw new ChatbotError(code as ErrorCode, cause);
+    let code: ErrorCode | "" = "bad_request:api";
+    let cause: string | undefined;
+
+    try {
+      const payload = await response.json();
+      code = (payload?.code as ErrorCode | "") || "bad_request:api";
+      cause = payload?.cause;
+    } catch {
+      cause = await response.text().catch(() => undefined);
+    }
+
+    throw new ChatbotError(code || "bad_request:api", cause);
   }
 
   return response.json();
@@ -32,8 +42,18 @@ export async function fetchWithErrorHandlers(
     const response = await fetch(input, init);
 
     if (!response.ok) {
-      const { code, cause } = await response.json();
-      throw new ChatbotError(code as ErrorCode, cause);
+      let code: ErrorCode | "" = "bad_request:api";
+      let cause: string | undefined;
+
+      try {
+        const payload = await response.json();
+        code = (payload?.code as ErrorCode | "") || "bad_request:api";
+        cause = payload?.cause;
+      } catch {
+        cause = await response.text().catch(() => undefined);
+      }
+
+      throw new ChatbotError(code || "bad_request:api", cause);
     }
 
     return response;

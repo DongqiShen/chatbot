@@ -423,7 +423,7 @@ export function voteMessage({
       const [existingVote] = await getDb()
         .select()
         .from(vote)
-        .where(and(eq(vote.messageId, messageId)));
+        .where(and(eq(vote.chatId, chatId), eq(vote.messageId, messageId)));
 
       if (existingVote) {
         return await getDb()

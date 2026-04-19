@@ -96,6 +96,12 @@ export function getMessageByErrorCode(errorCode: ErrorCode): string {
       return "You need to sign in before continuing.";
     case "forbidden:auth":
       return "Your account does not have access to this feature.";
+    case "unauthorized:vote":
+      return "You need to sign in before rating a response.";
+    case "forbidden:vote":
+      return "You can only rate responses in your own chats.";
+    case "not_found:vote":
+      return "This response can't be rated right now. Please try again in a moment.";
 
     case "rate_limit:chat":
       return "You've reached the message limit. Come back in 1 hour to continue chatting.";
