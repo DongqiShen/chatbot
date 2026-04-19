@@ -6,6 +6,7 @@ import { DefaultChatTransport } from "ai";
 import { usePathname } from "next/navigation";
 import {
   createContext,
+  useCallback,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
@@ -19,7 +20,12 @@ import useSWR, { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
 import { useDataStream } from "@/components/chat/data-stream-provider";
 import { DEFAULT_CHAT_MODEL } from "@/config/chat-models";
-import { getChatHistoryPaginationKey } from "@/components/chat/sidebar-history";
+import {
+  getChatHistoryPaginationKey,
+  NEW_CHAT_TITLE,
+  PENDING_CHAT_TITLE_TIMEOUT_MS,
+  type ChatHistory,
+} from "@/components/chat/sidebar-history";
 import { toast } from "@/components/chat/toast";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
@@ -54,6 +60,63 @@ const ActiveChatContext = createContext<ActiveChatContextValue | null>(null);
 function extractChatId(pathname: string): string | null {
   const match = pathname.match(/\/chat\/([^/]+)/);
   return match ? match[1] : null;
+}
+
+function upsertPendingChatHistory(
+  existingPages: ChatHistory[] | undefined,
+  {
+    chatId,
+    visibility,
+  }: {
+    chatId: string;
+    visibility: VisibilityType;
+  }
+): ChatHistory[] {
+  const optimisticChat = {
+    id: chatId,
+    createdAt: new Date(),
+    title: NEW_CHAT_TITLE,
+    userId: "",
+    visibility,
+    pendingTitleUntil: Date.now() + PENDING_CHAT_TITLE_TIMEOUT_MS,
+  };
+
+  if (!existingPages || existingPages.length === 0) {
+    return [{ chats: [optimisticChat], hasMore: false }];
+  }
+
+  const existingChatIndex = existingPages[0]?.chats.findIndex(
+    (chat) => chat.id === chatId
+  );
+
+  if (typeof existingChatIndex === "number" && existingChatIndex >= 0) {
+    return existingPages.map((page, pageIndex) => {
+      if (pageIndex !== 0) {
+        return page;
+      }
+
+      const chats = page.chats.slice();
+      const existingChat = chats[existingChatIndex];
+
+      chats[existingChatIndex] = {
+        ...existingChat,
+        pendingTitleUntil: optimisticChat.pendingTitleUntil,
+      };
+
+      return { ...page, chats };
+    });
+  }
+
+  return existingPages.map((page, pageIndex) => {
+    if (pageIndex !== 0) {
+      return page;
+    }
+
+    return {
+      ...page,
+      chats: [optimisticChat, ...page.chats],
+    };
+  });
 }
 
 export function ActiveChatProvider({ children }: { children: ReactNode }) {
@@ -180,6 +243,33 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     },
   });
 
+  const sendMessageWithHistorySync: typeof sendMessage = useCallback(
+    (message, options) => {
+      const isUserMessage =
+        typeof message === "object" &&
+        message !== null &&
+        "role" in message &&
+        message.role === "user";
+      const shouldInsertPendingChat =
+        isNewChat && messages.length === 0 && isUserMessage;
+
+      if (shouldInsertPendingChat) {
+        mutate(
+          unstable_serialize(getChatHistoryPaginationKey),
+          (existingPages?: ChatHistory[]) =>
+            upsertPendingChatHistory(existingPages, {
+              chatId,
+              visibility,
+            }),
+          { revalidate: false }
+        );
+      }
+
+      return sendMessage(message, options);
+    },
+    [chatId, isNewChat, messages.length, mutate, sendMessage, visibility]
+  );
+
   const loadedChatIds = useRef(new Set<string>());
 
   if (isNewChat && !loadedChatIds.current.has(newChatIdRef.current)) {
@@ -271,7 +361,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       chatId,
       messages,
       setMessages,
-      sendMessage,
+      sendMessage: sendMessageWithHistorySync,
       status,
       stop,
       regenerate,
@@ -291,7 +381,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       chatId,
       messages,
       setMessages,
-      sendMessage,
+      sendMessageWithHistorySync,
       status,
       stop,
       regenerate,
