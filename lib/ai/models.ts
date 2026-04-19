@@ -23,6 +23,23 @@ export type ChatModel = {
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
 };
 
+export function getConfiguredChatModel(): ChatModel | null {
+  const configuredModelId = process.env.OPENAI_MODEL;
+
+  if (!configuredModelId) {
+    return null;
+  }
+
+  const [provider = "openai-compatible"] = configuredModelId.split("/");
+
+  return {
+    id: configuredModelId,
+    name: configuredModelId,
+    provider,
+    description: "Configured via OPENAI_MODEL",
+  };
+}
+
 export const chatModels: ChatModel[] = [
   {
     id: "deepseek/deepseek-v3.2",
@@ -171,7 +188,17 @@ export async function getAllGatewayModels(): Promise<
 }
 
 export function getActiveModels(): ChatModel[] {
+  const configuredChatModel = getConfiguredChatModel();
+
+  if (configuredChatModel) {
+    return [configuredChatModel];
+  }
+
   return chatModels;
+}
+
+export function getDefaultChatModelId() {
+  return getConfiguredChatModel()?.id ?? DEFAULT_CHAT_MODEL;
 }
 
 export const allowedModelIds = new Set(chatModels.map((m) => m.id));

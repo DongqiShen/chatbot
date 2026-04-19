@@ -1,4 +1,5 @@
 import { customProvider, gateway } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { isTestEnvironment } from "../constants";
 import { titleModel } from "./models";
 
@@ -14,17 +15,79 @@ export const myProvider = isTestEnvironment
     })()
   : null;
 
+let compatibleProvider: ReturnType<typeof createOpenAICompatible> | null = null;
+let compatibleProviderKey: string | null = null;
+
+function getConfiguredOpenAICompatibleProvider() {
+  if (isTestEnvironment) {
+    return null;
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  const baseURL = process.env.OPENAI_BASE_URL;
+
+  if (!apiKey || !baseURL) {
+    return null;
+  }
+
+  const providerKey = JSON.stringify({ apiKey, baseURL });
+
+  if (compatibleProvider && compatibleProviderKey === providerKey) {
+    return compatibleProvider;
+  }
+
+  compatibleProvider = createOpenAICompatible({
+    name: "openai-compatible",
+    apiKey,
+    baseURL,
+  });
+  compatibleProviderKey = providerKey;
+
+  return compatibleProvider;
+}
+
+export function resolveConfiguredLanguageModelId(modelId: string) {
+  return process.env.OPENAI_MODEL || modelId;
+}
+
+export function isUsingConfiguredLanguageModel(modelId: string) {
+  return resolveConfiguredLanguageModelId(modelId) !== modelId;
+}
+
+export function getTitleModelGatewayOrder() {
+  if (process.env.OPENAI_MODEL) {
+    return undefined;
+  }
+
+  return titleModel.gatewayOrder;
+}
+
 export function getLanguageModel(modelId: string) {
   if (isTestEnvironment && myProvider) {
     return myProvider.languageModel(modelId);
   }
 
-  return gateway.languageModel(modelId);
+  const configuredProvider = getConfiguredOpenAICompatibleProvider();
+  const resolvedModelId = resolveConfiguredLanguageModelId(modelId);
+
+  if (configuredProvider) {
+    return configuredProvider.chatModel(resolvedModelId);
+  }
+
+  return gateway.languageModel(resolvedModelId);
 }
 
 export function getTitleModel() {
   if (isTestEnvironment && myProvider) {
     return myProvider.languageModel("title-model");
   }
-  return gateway.languageModel(titleModel.id);
+
+  const configuredProvider = getConfiguredOpenAICompatibleProvider();
+  const resolvedModelId = resolveConfiguredLanguageModelId(titleModel.id);
+
+  if (configuredProvider) {
+    return configuredProvider.chatModel(resolvedModelId);
+  }
+
+  return gateway.languageModel(resolvedModelId);
 }

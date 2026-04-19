@@ -643,11 +643,13 @@ function PureModelSelectorCompact({
   const capabilities: Record<string, ModelCapabilities> | undefined =
     modelsData?.capabilities ?? modelsData;
   const dynamicModels: ChatModel[] | undefined = modelsData?.models;
+  const isFixedModelSelection = (dynamicModels?.length ?? 0) === 1;
   const activeModels = dynamicModels ?? chatModels;
+  const defaultModelId = modelsData?.defaultModelId ?? DEFAULT_CHAT_MODEL;
 
   const selectedModel =
     activeModels.find((m: ChatModel) => m.id === selectedModelId) ??
-    activeModels.find((m: ChatModel) => m.id === DEFAULT_CHAT_MODEL) ??
+    activeModels.find((m: ChatModel) => m.id === defaultModelId) ??
     activeModels[0];
   const [provider] = selectedModel.id.split("/");
 
@@ -667,8 +669,15 @@ function PureModelSelectorCompact({
         <ModelSelectorInput placeholder="Search models..." />
         <ModelSelectorList>
           {(() => {
-            const curatedIds = new Set(chatModels.map((m) => m.id));
-            const allModels = dynamicModels
+            const curatedIds = new Set(
+              (isFixedModelSelection ? activeModels : chatModels).map(
+                (m) => m.id
+              )
+            );
+            const allModels =
+              isFixedModelSelection
+                ? activeModels
+                : dynamicModels
               ? [
                   ...chatModels,
                   ...dynamicModels.filter((m) => !curatedIds.has(m.id)),
@@ -749,7 +758,9 @@ function PureModelSelectorCompact({
                           return;
                         }
                         onModelChange?.(model.id);
-                        setCookie("chat-model", model.id);
+                        if (!isFixedModelSelection) {
+                          setCookie("chat-model", model.id);
+                        }
                         setOpen(false);
                         setTimeout(() => {
                           document

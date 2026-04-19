@@ -3,6 +3,7 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
+import { useEffect, useState } from "react";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
 import {
@@ -13,13 +14,294 @@ import {
   ToolOutput,
 } from "../ai-elements/tool";
 import { useDataStream } from "./data-stream-provider";
-import { DocumentToolResult } from "./document";
+import { DocumentToolCall, DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+
+type WeatherToolPart = Extract<
+  ChatMessage["parts"][number],
+  { type: "tool-getWeather" }
+> | {
+  type: "dynamic-tool";
+  toolName: "getWeather";
+  toolCallId: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "approval-requested"
+    | "approval-responded"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+  approval?: {
+    id: string;
+    approved?: boolean;
+    reason?: string;
+  };
+};
+
+type CreateDocumentToolPart = Extract<
+  ChatMessage["parts"][number],
+  { type: "tool-createDocument" }
+> | {
+  type: "dynamic-tool";
+  toolName: "createDocument";
+  toolCallId: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "approval-requested"
+    | "approval-responded"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  input?: {
+    title?: string;
+    kind?: "text" | "code" | "sheet";
+  };
+  output?: {
+    id?: string;
+    title?: string;
+    kind?: "text" | "code" | "sheet";
+    content?: string;
+    error?: string;
+  };
+  errorText?: string;
+};
+
+type UpdateDocumentToolPart = Extract<
+  ChatMessage["parts"][number],
+  { type: "tool-updateDocument" }
+> | {
+  type: "dynamic-tool";
+  toolName: "updateDocument";
+  toolCallId: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "approval-requested"
+    | "approval-responded"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  input?: {
+    id?: string;
+    description?: string;
+  };
+  output?: {
+    id?: string;
+    title?: string;
+    kind?: "text" | "code" | "sheet";
+    content?: string;
+    error?: string;
+  };
+  errorText?: string;
+};
+
+type EditDocumentToolPart = {
+  type: "dynamic-tool";
+  toolName: "editDocument";
+  toolCallId: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "approval-requested"
+    | "approval-responded"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  input?: {
+    id?: string;
+    old_string?: string;
+    new_string?: string;
+    replace_all?: boolean;
+  };
+  output?: {
+    id?: string;
+    title?: string;
+    kind?: "text" | "code" | "sheet";
+    content?: string;
+    error?: string;
+  };
+  errorText?: string;
+};
+
+type RequestSuggestionsToolPart = Extract<
+  ChatMessage["parts"][number],
+  { type: "tool-requestSuggestions" }
+> | {
+  type: "dynamic-tool";
+  toolName: "requestSuggestions";
+  toolCallId: string;
+  state:
+    | "input-streaming"
+    | "input-available"
+    | "approval-requested"
+    | "approval-responded"
+    | "output-available"
+    | "output-denied"
+    | "output-error";
+  input?: {
+    documentId?: string;
+  };
+  output?: {
+    id?: string;
+    title?: string;
+    kind?: "text" | "code" | "sheet";
+    message?: string;
+    error?: string;
+  };
+  errorText?: string;
+};
+
+function WeatherToolCard({
+  weatherPart,
+  isLoading,
+  addToolApprovalResponse,
+}: {
+  weatherPart: WeatherToolPart;
+  isLoading: boolean;
+  addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+}) {
+  const { toolCallId, state } = weatherPart;
+  const approvalId = weatherPart.approval?.id;
+  const isDenied =
+    state === "output-denied" ||
+    (state === "approval-responded" && weatherPart.approval?.approved === false);
+  const widthClass = "w-[min(100%,450px)]";
+  const isErrorOutput =
+    state === "output-available" &&
+    weatherPart.output &&
+    typeof weatherPart.output === "object" &&
+    "error" in weatherPart.output;
+
+  const shouldOpen =
+    state === "input-streaming" ||
+    state === "input-available" ||
+    state === "approval-requested" ||
+    (state === "approval-responded" && isLoading);
+
+  const [open, setOpen] = useState(shouldOpen);
+
+  useEffect(() => {
+    setOpen(shouldOpen);
+  }, [shouldOpen, toolCallId]);
+
+  if (state === "output-available" && !isErrorOutput) {
+    return (
+      <div className={widthClass}>
+        <Weather weatherAtLocation={weatherPart.output as any} />
+      </div>
+    );
+  }
+
+  if (state === "output-error") {
+    return (
+      <div className={widthClass}>
+        <Tool className="w-full" onOpenChange={setOpen} open={open}>
+          <ToolHeader state="output-error" type="tool-getWeather" />
+          <ToolContent>
+            <div className="px-4 py-3 text-muted-foreground text-sm">
+              {weatherPart.errorText || "Weather lookup failed."}
+            </div>
+          </ToolContent>
+        </Tool>
+      </div>
+    );
+  }
+
+  if (isErrorOutput) {
+    return (
+      <div className={widthClass}>
+        <Tool className="w-full" onOpenChange={setOpen} open={open}>
+          <ToolHeader state="output-error" type="tool-getWeather" />
+          <ToolContent>
+            <div className="px-4 py-3 text-muted-foreground text-sm">
+              {String((weatherPart.output as { error: unknown }).error)}
+            </div>
+          </ToolContent>
+        </Tool>
+      </div>
+    );
+  }
+
+  if (isDenied) {
+    return (
+      <div className={widthClass}>
+        <Tool className="w-full" onOpenChange={setOpen} open={open}>
+          <ToolHeader state="output-denied" type="tool-getWeather" />
+          <ToolContent>
+            <div className="px-4 py-3 text-muted-foreground text-sm">
+              Weather lookup was denied.
+            </div>
+          </ToolContent>
+        </Tool>
+      </div>
+    );
+  }
+
+  if (state === "approval-responded") {
+    return (
+      <div className={widthClass}>
+        <Tool className="w-full" onOpenChange={setOpen} open={open}>
+          <ToolHeader state={state} type="tool-getWeather" />
+          <ToolContent>
+            <ToolInput input={weatherPart.input} />
+          </ToolContent>
+        </Tool>
+      </div>
+    );
+  }
+
+  return (
+    <div className={widthClass}>
+      <Tool className="w-full" onOpenChange={setOpen} open={open}>
+        <ToolHeader state={state} type="tool-getWeather" />
+        <ToolContent>
+          {(state === "input-available" || state === "approval-requested") && (
+            <ToolInput input={weatherPart.input} />
+          )}
+          {state === "approval-requested" && approvalId && (
+            <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+              <button
+                className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  addToolApprovalResponse({
+                    id: approvalId,
+                    approved: false,
+                    reason: "User denied weather lookup",
+                  });
+                }}
+                type="button"
+              >
+                Deny
+              </button>
+              <button
+                className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-sm transition-colors hover:bg-primary/90"
+                onClick={() => {
+                  addToolApprovalResponse({
+                    id: approvalId,
+                    approved: true,
+                  });
+                }}
+                type="button"
+              >
+                Allow
+              </button>
+            </div>
+          )}
+        </ToolContent>
+      </Tool>
+    </div>
+  );
+}
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -128,93 +410,17 @@ const PurePreviewMessage = ({
       );
     }
 
-    if (type === "tool-getWeather") {
-      const { toolCallId, state } = part;
-      const approvalId = (part as { approval?: { id: string } }).approval?.id;
-      const isDenied =
-        state === "output-denied" ||
-        (state === "approval-responded" &&
-          (part as { approval?: { approved?: boolean } }).approval?.approved ===
-            false);
-      const widthClass = "w-[min(100%,450px)]";
-
-      if (state === "output-available") {
-        return (
-          <div className={widthClass} key={toolCallId}>
-            <Weather weatherAtLocation={part.output} />
-          </div>
-        );
-      }
-
-      if (isDenied) {
-        return (
-          <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
-              <ToolHeader state="output-denied" type="tool-getWeather" />
-              <ToolContent>
-                <div className="px-4 py-3 text-muted-foreground text-sm">
-                  Weather lookup was denied.
-                </div>
-              </ToolContent>
-            </Tool>
-          </div>
-        );
-      }
-
-      if (state === "approval-responded") {
-        return (
-          <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
-              <ToolHeader state={state} type="tool-getWeather" />
-              <ToolContent>
-                <ToolInput input={part.input} />
-              </ToolContent>
-            </Tool>
-          </div>
-        );
-      }
-
+    if (
+      type === "tool-getWeather" ||
+      (type === "dynamic-tool" && part.toolName === "getWeather")
+    ) {
       return (
-        <div className={widthClass} key={toolCallId}>
-          <Tool className="w-full" defaultOpen={true}>
-            <ToolHeader state={state} type="tool-getWeather" />
-            <ToolContent>
-              {(state === "input-available" ||
-                state === "approval-requested") && (
-                <ToolInput input={part.input} />
-              )}
-              {state === "approval-requested" && approvalId && (
-                <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-                  <button
-                    className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: false,
-                        reason: "User denied weather lookup",
-                      });
-                    }}
-                    type="button"
-                  >
-                    Deny
-                  </button>
-                  <button
-                    className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-sm transition-colors hover:bg-primary/90"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: true,
-                      });
-                    }}
-                    type="button"
-                  >
-                    Allow
-                  </button>
-                </div>
-              )}
-            </ToolContent>
-          </Tool>
-        </div>
+        <WeatherToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
+          isLoading={isLoading}
+          key={(part as WeatherToolPart).toolCallId}
+          weatherPart={part as WeatherToolPart}
+        />
       );
     }
 
@@ -241,6 +447,55 @@ const PurePreviewMessage = ({
       );
     }
 
+    if (type === "dynamic-tool" && part.toolName === "createDocument") {
+      const createDocumentPart = part as CreateDocumentToolPart;
+
+      if (createDocumentPart.state === "output-available") {
+        if (createDocumentPart.output && "error" in createDocumentPart.output) {
+          return (
+            <div
+              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+              key={createDocumentPart.toolCallId}
+            >
+              Error creating document: {String(createDocumentPart.output.error)}
+            </div>
+          );
+        }
+
+        return (
+          <DocumentPreview
+            isReadonly={isReadonly}
+            key={createDocumentPart.toolCallId}
+            result={createDocumentPart.output}
+          />
+        );
+      }
+
+      if (createDocumentPart.state === "output-error") {
+        return (
+          <div
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+            key={createDocumentPart.toolCallId}
+          >
+            Error creating document:{" "}
+            {createDocumentPart.errorText || "Unknown error"}
+          </div>
+        );
+      }
+
+      return (
+        <DocumentToolCall
+          args={{
+            title: createDocumentPart.input?.title ?? "Untitled document",
+            kind: createDocumentPart.input?.kind ?? "text",
+          }}
+          isReadonly={isReadonly}
+          key={createDocumentPart.toolCallId}
+          type="create"
+        />
+      );
+    }
+
     if (type === "tool-updateDocument") {
       const { toolCallId } = part;
 
@@ -263,6 +518,109 @@ const PurePreviewMessage = ({
             result={part.output}
           />
         </div>
+      );
+    }
+
+    if (type === "dynamic-tool" && part.toolName === "updateDocument") {
+      const updateDocumentPart = part as UpdateDocumentToolPart;
+
+      if (updateDocumentPart.state === "output-available") {
+        if (updateDocumentPart.output && "error" in updateDocumentPart.output) {
+          return (
+            <div
+              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+              key={updateDocumentPart.toolCallId}
+            >
+              Error updating document: {String(updateDocumentPart.output.error)}
+            </div>
+          );
+        }
+
+        return (
+          <div className="relative" key={updateDocumentPart.toolCallId}>
+            <DocumentPreview
+              args={{ ...(updateDocumentPart.output ?? {}), isUpdate: true }}
+              isReadonly={isReadonly}
+              result={updateDocumentPart.output}
+            />
+          </div>
+        );
+      }
+
+      if (updateDocumentPart.state === "output-error") {
+        return (
+          <div
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+            key={updateDocumentPart.toolCallId}
+          >
+            Error updating document:{" "}
+            {updateDocumentPart.errorText || "Unknown error"}
+          </div>
+        );
+      }
+
+      return (
+        <DocumentToolCall
+          args={{
+            id: updateDocumentPart.input?.id ?? "",
+            description:
+              updateDocumentPart.input?.description ?? "Updating document",
+          }}
+          isReadonly={isReadonly}
+          key={updateDocumentPart.toolCallId}
+          type="update"
+        />
+      );
+    }
+
+    if (type === "dynamic-tool" && part.toolName === "editDocument") {
+      const editDocumentPart = part as EditDocumentToolPart;
+
+      if (editDocumentPart.state === "output-available") {
+        if (editDocumentPart.output && "error" in editDocumentPart.output) {
+          return (
+            <div
+              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+              key={editDocumentPart.toolCallId}
+            >
+              Error editing document: {String(editDocumentPart.output.error)}
+            </div>
+          );
+        }
+
+        return (
+          <div className="relative" key={editDocumentPart.toolCallId}>
+            <DocumentPreview
+              args={{ ...(editDocumentPart.output ?? {}), isUpdate: true }}
+              isReadonly={isReadonly}
+              result={editDocumentPart.output}
+            />
+          </div>
+        );
+      }
+
+      if (editDocumentPart.state === "output-error") {
+        return (
+          <div
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
+            key={editDocumentPart.toolCallId}
+          >
+            Error editing document:{" "}
+            {editDocumentPart.errorText || "Unknown error"}
+          </div>
+        );
+      }
+
+      return (
+        <DocumentToolCall
+          args={{
+            id: editDocumentPart.input?.id ?? "",
+            description: "Applying targeted edit",
+          }}
+          isReadonly={isReadonly}
+          key={editDocumentPart.toolCallId}
+          type="update"
+        />
       );
     }
 
@@ -294,6 +652,78 @@ const PurePreviewMessage = ({
                     />
                   )
                 }
+              />
+            )}
+          </ToolContent>
+        </Tool>
+      );
+    }
+
+    if (type === "dynamic-tool" && part.toolName === "requestSuggestions") {
+      const requestSuggestionsPart = part as RequestSuggestionsToolPart;
+
+      if (
+        requestSuggestionsPart.state === "input-streaming" ||
+        requestSuggestionsPart.state === "input-available" ||
+        requestSuggestionsPart.state === "approval-requested" ||
+        requestSuggestionsPart.state === "approval-responded"
+      ) {
+        return (
+          <DocumentToolCall
+            args={{
+              documentId: requestSuggestionsPart.input?.documentId ?? "",
+            }}
+            isReadonly={isReadonly}
+            key={requestSuggestionsPart.toolCallId}
+            type="request-suggestions"
+          />
+        );
+      }
+
+      return (
+        <Tool
+          className="w-[min(100%,450px)]"
+          defaultOpen={true}
+          key={requestSuggestionsPart.toolCallId}
+        >
+          <ToolHeader
+            state={requestSuggestionsPart.state}
+            toolName="requestSuggestions"
+            type="dynamic-tool"
+          />
+          <ToolContent>
+            {requestSuggestionsPart.input && (
+              <ToolInput input={requestSuggestionsPart.input} />
+            )}
+            {requestSuggestionsPart.state === "output-available" &&
+              requestSuggestionsPart.output && (
+                <ToolOutput
+                  errorText={undefined}
+                  output={
+                    "error" in requestSuggestionsPart.output ? (
+                      <div className="rounded border p-2 text-red-500">
+                        Error: {String(requestSuggestionsPart.output.error)}
+                      </div>
+                    ) : (
+                      <DocumentToolResult
+                        isReadonly={isReadonly}
+                        result={{
+                          id: requestSuggestionsPart.output.id ?? "",
+                          title: requestSuggestionsPart.output.title ?? "Untitled document",
+                          kind: requestSuggestionsPart.output.kind ?? "text",
+                        }}
+                        type="request-suggestions"
+                      />
+                    )
+                  }
+                />
+              )}
+            {requestSuggestionsPart.state === "output-error" && (
+              <ToolOutput
+                errorText={
+                  requestSuggestionsPart.errorText || "Suggestion generation failed"
+                }
+                output={undefined}
               />
             )}
           </ToolContent>

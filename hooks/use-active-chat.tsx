@@ -81,6 +81,15 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   const [input, setInput] = useState("");
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
+  const { data: modelsData } = useSWR(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
+  );
+  const fixedModelId: string | undefined =
+    Array.isArray(modelsData?.models) && modelsData.models.length === 1
+      ? modelsData.defaultModelId
+      : undefined;
 
   const { data: chatData, isLoading } = useSWR(
     isNewChat
@@ -199,6 +208,11 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (chatData && !isNewChat) {
+      if (fixedModelId) {
+        setCurrentModelId(fixedModelId);
+        return;
+      }
+
       const cookieModel = document.cookie
         .split("; ")
         .find((row) => row.startsWith("chat-model="))
@@ -207,7 +221,15 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
         setCurrentModelId(decodeURIComponent(cookieModel));
       }
     }
-  }, [chatData, isNewChat]);
+  }, [chatData, fixedModelId, isNewChat]);
+
+  useEffect(() => {
+    if (!fixedModelId) {
+      return;
+    }
+
+    setCurrentModelId(fixedModelId);
+  }, [fixedModelId]);
 
   const hasAppendedQueryRef = useRef(false);
   useEffect(() => {
