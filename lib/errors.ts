@@ -1,3 +1,5 @@
+import { logger, serializeError } from "@/lib/logger";
+
 export type ErrorType =
   | "bad_request"
   | "unauthorized"
@@ -59,10 +61,13 @@ export class ChatbotError extends Error {
     const { message, cause, statusCode } = this;
 
     if (visibility === "log") {
-      console.error({
+      logger.error("Handled application error", {
         code,
-        message,
+        errorType: this.type,
+        surface: this.surface,
+        statusCode,
         cause,
+        error: serializeError(this),
       });
 
       return Response.json(

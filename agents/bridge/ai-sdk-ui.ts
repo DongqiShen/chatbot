@@ -1,10 +1,15 @@
-import {
-  type AiSdkUiMessageStreamSource,
-} from "@openai/agents-extensions/ai-sdk-ui";
+import type { AiSdkUiMessageStreamSource } from "@openai/agents-extensions/ai-sdk-ui";
 import type { UIMessageStreamWriter } from "ai";
-import type { ArtifactKind } from "@/components/chat/artifact";
-import type { ChatMessage } from "@/lib/types";
 import { createArtifactStreamBridge } from "@/agents/bridge/artifact-stream";
+import type { ArtifactKind } from "@/components/chat/artifact";
+import type { Logger } from "@/lib/logger";
+import {
+  shouldLogModelIO,
+  shouldLogToolCalls,
+  summarizeText,
+  summarizeUnknown,
+} from "@/lib/logger";
+import type { ChatMessage } from "@/lib/types";
 
 export function createAiSdkUiBridge(
   writer: UIMessageStreamWriter<ChatMessage>
@@ -59,8 +64,12 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) {
+export function createAgentsUiMessageStream(
+  source: AiSdkUiMessageStreamSource,
+  options?: { logger?: Logger }
+) {
   const events = resolveEventSource(source);
+  const streamLogger = options?.logger;
 
   return new ReadableStream({
     async start(controller) {
@@ -71,6 +80,7 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
       let stepHasTextOutput = false;
       let textOpen = false;
       let currentTextId = "";
+      let currentResponseText = "";
 
       const ensureMessageStart = () => {
         if (!messageId) {
@@ -103,6 +113,7 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
           if (data.type === "response_started") {
             ensureMessageStart();
             responseHasText = false;
+            currentResponseText = "";
             ensureStepStart();
           }
 
@@ -123,9 +134,20 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
               id: currentTextId,
               delta: data.delta,
             });
+            currentResponseText += data.delta;
           }
 
           if (data.type === "response_done") {
+            if (
+              streamLogger &&
+              shouldLogModelIO() &&
+              currentResponseText.trim()
+            ) {
+              streamLogger.info("Model response chunk completed", {
+                assistantOutput: summarizeText(currentResponseText),
+              });
+            }
+
             if (textOpen) {
               textOpen = false;
               controller.enqueue({ type: "text-end", id: currentTextId });
@@ -152,6 +174,7 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
 
               const content = event.item?.content;
               if (content) {
+                currentResponseText = content;
                 const textId = createId("text");
                 controller.enqueue({ type: "text-start", id: textId });
                 controller.enqueue({
@@ -162,6 +185,12 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
                 controller.enqueue({ type: "text-end", id: textId });
                 stepHasTextOutput = true;
                 responseHasText = true;
+
+                if (streamLogger && shouldLogModelIO()) {
+                  streamLogger.info("Model response message created", {
+                    assistantOutput: summarizeText(content),
+                  });
+                }
               }
             }
 
@@ -175,12 +204,24 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
             ensureStepStart();
 
             const raw = event.item?.rawItem ?? {};
-            const toolName = String(raw.name ?? raw.type ?? event.item?.toolName ?? "tool");
+            const toolName = String(
+              raw.name ?? raw.type ?? event.item?.toolName ?? "tool"
+            );
             const toolCallId = String(
               raw.callId ?? raw.id ?? `${toolName}-${createId("call")}`
             );
             const input =
-              typeof raw.arguments === "string" ? parseJsonArgs(raw.arguments) : {};
+              typeof raw.arguments === "string"
+                ? parseJsonArgs(raw.arguments)
+                : {};
+
+            if (streamLogger && shouldLogToolCalls()) {
+              streamLogger.info("Tool call started", {
+                toolCallId,
+                toolName,
+                toolInput: summarizeUnknown(input),
+              });
+            }
 
             controller.enqueue({
               type: "tool-input-start",
@@ -208,6 +249,13 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
                 ? event.item.output
                 : raw.output;
 
+            if (streamLogger && shouldLogToolCalls()) {
+              streamLogger.info("Tool output received", {
+                toolCallId,
+                toolOutput: summarizeUnknown(output),
+              });
+            }
+
             controller.enqueue({
               type: "tool-output-available",
               toolCallId,
@@ -221,11 +269,21 @@ export function createAgentsUiMessageStream(source: AiSdkUiMessageStreamSource) 
             ensureStepStart();
 
             const raw = event.item?.rawItem ?? {};
-            const toolName = String(raw.name ?? raw.type ?? event.item?.toolName ?? "tool");
+            const toolName = String(
+              raw.name ?? raw.type ?? event.item?.toolName ?? "tool"
+            );
             const toolCallId = String(
               raw.callId ?? raw.id ?? `${toolName}-${createId("call")}`
             );
             const approvalId = String(raw.id ?? toolCallId);
+
+            if (streamLogger && shouldLogToolCalls()) {
+              streamLogger.info("Tool approval requested", {
+                toolCallId,
+                approvalId,
+                toolName,
+              });
+            }
 
             controller.enqueue({
               type: "tool-approval-request",

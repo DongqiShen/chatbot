@@ -4,6 +4,7 @@ import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
 import { DUMMY_PASSWORD } from "@/lib/constants";
 import { createGuestUser, getUser } from "@/lib/db/queries";
+import { logger, serializeError } from "@/lib/logger";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -44,12 +45,19 @@ export const {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
+        const authLogger = logger.child({
+          component: "auth",
+          provider: "credentials",
+        });
         const email = String(credentials.email ?? "");
         const password = String(credentials.password ?? "");
         const users = await getUser(email);
 
         if (users.length === 0) {
           await compare(password, DUMMY_PASSWORD);
+          authLogger.warn("Credentials authorization failed", {
+            reason: "user-not-found",
+          });
           return null;
         }
 
@@ -57,15 +65,36 @@ export const {
 
         if (!user.password) {
           await compare(password, DUMMY_PASSWORD);
+          authLogger.warn("Credentials authorization failed", {
+            reason: "missing-password",
+            userId: user.id,
+          });
           return null;
         }
 
-        const passwordsMatch = await compare(password, user.password);
+        let passwordsMatch = false;
+
+        try {
+          passwordsMatch = await compare(password, user.password);
+        } catch (error) {
+          authLogger.error("Password comparison failed", {
+            userId: user.id,
+            error: serializeError(error),
+          });
+          return null;
+        }
 
         if (!passwordsMatch) {
+          authLogger.warn("Credentials authorization failed", {
+            reason: "password-mismatch",
+            userId: user.id,
+          });
           return null;
         }
 
+        authLogger.info("Credentials authorization succeeded", {
+          userId: user.id,
+        });
         return { ...user, type: "regular" };
       },
     }),
@@ -73,7 +102,14 @@ export const {
       id: "guest",
       credentials: {},
       async authorize() {
+        const guestAuthLogger = logger.child({
+          component: "auth",
+          provider: "guest",
+        });
         const [guestUser] = await createGuestUser();
+        guestAuthLogger.info("Guest user created", {
+          userId: guestUser.id,
+        });
         return { ...guestUser, type: "guest" };
       },
     }),
