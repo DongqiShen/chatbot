@@ -16,13 +16,13 @@ import {
   findLatestRunStateMessage,
 } from "@/agents/state/run-state-attachment";
 import { serializeAgentRunResultToMessage } from "@/agents/state/serialize-run-result";
+import type { RequestHints } from "@/agents/types/request-hints";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import {
   getAllowedModelIds,
   getDefaultChatModelId,
-} from "@/config/model-config";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import type { RequestHints } from "@/lib/ai/prompts";
+} from "@/agents/config/model-config";
+import { entitlementsByUserType } from "@/config/entitlements";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,

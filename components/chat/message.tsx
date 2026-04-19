@@ -1,5 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import type { ReactNode } from "react";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -10,6 +11,8 @@ import {
   Tool,
   ToolContent,
   ToolHeader,
+  type ToolInputProps,
+  type ToolOutputProps,
   ToolInput,
   ToolOutput,
 } from "../ai-elements/tool";
@@ -21,6 +24,32 @@ import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+
+type DynamicToolState =
+  | "input-streaming"
+  | "input-available"
+  | "approval-requested"
+  | "approval-responded"
+  | "output-available"
+  | "output-denied"
+  | "output-error";
+
+type DynamicToolPart = Extract<
+  ChatMessage["parts"][number],
+  { type: "dynamic-tool" }
+> & {
+  toolCallId: string;
+  toolName: string;
+  state: DynamicToolState;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+  approval?: {
+    id: string;
+    approved?: boolean;
+    reason?: string;
+  };
+};
 
 type WeatherToolPart = Extract<
   ChatMessage["parts"][number],
@@ -160,6 +189,114 @@ type RequestSuggestionsToolPart = Extract<
   };
   errorText?: string;
 };
+
+function DynamicToolCard({
+  part,
+  addToolApprovalResponse,
+  defaultOpen = true,
+  title,
+  output,
+}: {
+  part: DynamicToolPart;
+  addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+  defaultOpen?: boolean;
+  title?: string;
+  output?: ReactNode;
+}) {
+  const shouldOpen =
+    part.state === "input-streaming" ||
+    part.state === "input-available" ||
+    part.state === "approval-requested" ||
+    (part.state === "approval-responded" && part.approval?.approved !== false);
+
+  const [open, setOpen] = useState(shouldOpen || defaultOpen);
+
+  useEffect(() => {
+    setOpen(shouldOpen || defaultOpen);
+  }, [defaultOpen, part.toolCallId, shouldOpen]);
+
+  const approvalId = part.approval?.id;
+  const normalizedInput = part.input as ToolInputProps["input"];
+  const normalizedErrorText =
+    part.state === "output-error"
+      ? part.errorText || `${part.toolName} failed.`
+      : part.state === "output-available" &&
+          part.output &&
+          typeof part.output === "object" &&
+          "error" in part.output
+        ? String((part.output as { error: unknown }).error)
+        : undefined;
+  const normalizedOutput = (output ?? part.output) as
+    | ToolOutputProps["output"]
+    | ReactNode;
+
+  return (
+    <Tool className="w-[min(100%,450px)]" onOpenChange={setOpen} open={open}>
+      <ToolHeader
+        state={
+          normalizedErrorText && part.state === "output-available"
+            ? "output-error"
+            : part.state
+        }
+        title={title}
+        toolName={part.toolName}
+        type="dynamic-tool"
+      />
+      <ToolContent>
+        {Boolean(normalizedInput) &&
+          (part.state === "input-available" ||
+            part.state === "approval-requested" ||
+            part.state === "approval-responded" ||
+            part.state === "output-available" ||
+            part.state === "output-error" ||
+            part.state === "output-denied") && <ToolInput input={normalizedInput} />}
+
+        {part.state === "approval-requested" && approvalId && (
+          <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+            <button
+              className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground"
+              onClick={() => {
+                addToolApprovalResponse({
+                  id: approvalId,
+                  approved: false,
+                  reason: `User denied ${part.toolName}`,
+                });
+              }}
+              type="button"
+            >
+              Deny
+            </button>
+            <button
+              className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-sm transition-colors hover:bg-primary/90"
+              onClick={() => {
+                addToolApprovalResponse({
+                  id: approvalId,
+                  approved: true,
+                });
+              }}
+              type="button"
+            >
+              Allow
+            </button>
+          </div>
+        )}
+
+        {(part.state === "output-available" ||
+          part.state === "output-error" ||
+          part.state === "output-denied") && (
+          <ToolOutput
+            errorText={
+              part.state === "output-denied"
+                ? `${part.toolName} was denied.`
+                : normalizedErrorText
+            }
+            output={normalizedErrorText ? undefined : normalizedOutput}
+          />
+        )}
+      </ToolContent>
+    </Tool>
+  );
+}
 
 function WeatherToolCard({
   weatherPart,
@@ -450,18 +587,31 @@ const PurePreviewMessage = ({
     if (type === "dynamic-tool" && part.toolName === "createDocument") {
       const createDocumentPart = part as CreateDocumentToolPart;
 
-      if (createDocumentPart.state === "output-available") {
-        if (createDocumentPart.output && "error" in createDocumentPart.output) {
-          return (
-            <div
-              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-              key={createDocumentPart.toolCallId}
-            >
-              Error creating document: {String(createDocumentPart.output.error)}
-            </div>
-          );
-        }
+      if (
+        createDocumentPart.state === "input-streaming" ||
+        createDocumentPart.state === "input-available" ||
+        createDocumentPart.state === "approval-requested" ||
+        createDocumentPart.state === "approval-responded"
+      ) {
+        return (
+          <DocumentToolCall
+            args={{
+              title: createDocumentPart.input?.title ?? "Untitled document",
+              kind: createDocumentPart.input?.kind ?? "text",
+            }}
+            isReadonly={isReadonly}
+            key={createDocumentPart.toolCallId}
+            type="create"
+          />
+        );
+      }
 
+      if (
+        createDocumentPart.state === "output-available" &&
+        createDocumentPart.output &&
+        !(typeof createDocumentPart.output === "object" &&
+          "error" in createDocumentPart.output)
+      ) {
         return (
           <DocumentPreview
             isReadonly={isReadonly}
@@ -471,27 +621,12 @@ const PurePreviewMessage = ({
         );
       }
 
-      if (createDocumentPart.state === "output-error") {
-        return (
-          <div
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-            key={createDocumentPart.toolCallId}
-          >
-            Error creating document:{" "}
-            {createDocumentPart.errorText || "Unknown error"}
-          </div>
-        );
-      }
-
       return (
-        <DocumentToolCall
-          args={{
-            title: createDocumentPart.input?.title ?? "Untitled document",
-            kind: createDocumentPart.input?.kind ?? "text",
-          }}
-          isReadonly={isReadonly}
+        <DynamicToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
           key={createDocumentPart.toolCallId}
-          type="create"
+          part={createDocumentPart as DynamicToolPart}
+          title="createDocument"
         />
       );
     }
@@ -524,18 +659,35 @@ const PurePreviewMessage = ({
     if (type === "dynamic-tool" && part.toolName === "updateDocument") {
       const updateDocumentPart = part as UpdateDocumentToolPart;
 
-      if (updateDocumentPart.state === "output-available") {
-        if (updateDocumentPart.output && "error" in updateDocumentPart.output) {
-          return (
-            <div
-              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-              key={updateDocumentPart.toolCallId}
-            >
-              Error updating document: {String(updateDocumentPart.output.error)}
-            </div>
-          );
-        }
+      if (
+        updateDocumentPart.state === "input-streaming" ||
+        updateDocumentPart.state === "input-available" ||
+        updateDocumentPart.state === "approval-requested" ||
+        updateDocumentPart.state === "approval-responded"
+      ) {
+        return (
+          <DocumentToolCall
+            args={{
+              id: updateDocumentPart.input?.id ?? "",
+              description:
+                (updateDocumentPart.input &&
+                "description" in updateDocumentPart.input
+                  ? updateDocumentPart.input.description
+                  : undefined) ?? "Updating document",
+            }}
+            isReadonly={isReadonly}
+            key={updateDocumentPart.toolCallId}
+            type="update"
+          />
+        );
+      }
 
+      if (
+        updateDocumentPart.state === "output-available" &&
+        updateDocumentPart.output &&
+        !(typeof updateDocumentPart.output === "object" &&
+          "error" in updateDocumentPart.output)
+      ) {
         return (
           <div className="relative" key={updateDocumentPart.toolCallId}>
             <DocumentPreview
@@ -547,31 +699,12 @@ const PurePreviewMessage = ({
         );
       }
 
-      if (updateDocumentPart.state === "output-error") {
-        return (
-          <div
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-            key={updateDocumentPart.toolCallId}
-          >
-            Error updating document:{" "}
-            {updateDocumentPart.errorText || "Unknown error"}
-          </div>
-        );
-      }
-
       return (
-        <DocumentToolCall
-          args={{
-            id: updateDocumentPart.input?.id ?? "",
-            description:
-              (updateDocumentPart.input &&
-              "description" in updateDocumentPart.input
-                ? updateDocumentPart.input.description
-                : undefined) ?? "Updating document",
-          }}
-          isReadonly={isReadonly}
+        <DynamicToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
           key={updateDocumentPart.toolCallId}
-          type="update"
+          part={updateDocumentPart as DynamicToolPart}
+          title="updateDocument"
         />
       );
     }
@@ -579,18 +712,31 @@ const PurePreviewMessage = ({
     if (type === "dynamic-tool" && part.toolName === "editDocument") {
       const editDocumentPart = part as EditDocumentToolPart;
 
-      if (editDocumentPart.state === "output-available") {
-        if (editDocumentPart.output && "error" in editDocumentPart.output) {
-          return (
-            <div
-              className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-              key={editDocumentPart.toolCallId}
-            >
-              Error editing document: {String(editDocumentPart.output.error)}
-            </div>
-          );
-        }
+      if (
+        editDocumentPart.state === "input-streaming" ||
+        editDocumentPart.state === "input-available" ||
+        editDocumentPart.state === "approval-requested" ||
+        editDocumentPart.state === "approval-responded"
+      ) {
+        return (
+          <DocumentToolCall
+            args={{
+              id: editDocumentPart.input?.id ?? "",
+              description: "Applying targeted edit",
+            }}
+            isReadonly={isReadonly}
+            key={editDocumentPart.toolCallId}
+            type="update"
+          />
+        );
+      }
 
+      if (
+        editDocumentPart.state === "output-available" &&
+        editDocumentPart.output &&
+        !(typeof editDocumentPart.output === "object" &&
+          "error" in editDocumentPart.output)
+      ) {
         return (
           <div className="relative" key={editDocumentPart.toolCallId}>
             <DocumentPreview
@@ -602,27 +748,12 @@ const PurePreviewMessage = ({
         );
       }
 
-      if (editDocumentPart.state === "output-error") {
-        return (
-          <div
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500 dark:bg-red-950/50"
-            key={editDocumentPart.toolCallId}
-          >
-            Error editing document:{" "}
-            {editDocumentPart.errorText || "Unknown error"}
-          </div>
-        );
-      }
-
       return (
-        <DocumentToolCall
-          args={{
-            id: editDocumentPart.input?.id ?? "",
-            description: "Applying targeted edit",
-          }}
-          isReadonly={isReadonly}
+        <DynamicToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
           key={editDocumentPart.toolCallId}
-          type="update"
+          part={editDocumentPart as DynamicToolPart}
+          title="editDocument"
         />
       );
     }
@@ -684,53 +815,39 @@ const PurePreviewMessage = ({
       }
 
       return (
-        <Tool
-          className="w-[min(100%,450px)]"
-          defaultOpen={true}
+        <DynamicToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
           key={requestSuggestionsPart.toolCallId}
-        >
-          <ToolHeader
-            state={requestSuggestionsPart.state}
-            toolName="requestSuggestions"
-            type="dynamic-tool"
-          />
-          <ToolContent>
-            {requestSuggestionsPart.input && (
-              <ToolInput input={requestSuggestionsPart.input} />
-            )}
-            {requestSuggestionsPart.state === "output-available" &&
-              requestSuggestionsPart.output && (
-                <ToolOutput
-                  errorText={undefined}
-                  output={
-                    "error" in requestSuggestionsPart.output ? (
-                      <div className="rounded border p-2 text-red-500">
-                        Error: {String(requestSuggestionsPart.output.error)}
-                      </div>
-                    ) : (
-                      <DocumentToolResult
-                        isReadonly={isReadonly}
-                        result={{
-                          id: requestSuggestionsPart.output.id ?? "",
-                          title: requestSuggestionsPart.output.title ?? "Untitled document",
-                          kind: requestSuggestionsPart.output.kind ?? "text",
-                        }}
-                        type="request-suggestions"
-                      />
-                    )
-                  }
-                />
-              )}
-            {requestSuggestionsPart.state === "output-error" && (
-              <ToolOutput
-                errorText={
-                  requestSuggestionsPart.errorText || "Suggestion generation failed"
-                }
-                output={undefined}
+          output={
+            requestSuggestionsPart.state === "output-available" &&
+            requestSuggestionsPart.output &&
+            typeof requestSuggestionsPart.output === "object" &&
+            !("error" in requestSuggestionsPart.output) ? (
+              <DocumentToolResult
+                isReadonly={isReadonly}
+                result={{
+                  id: requestSuggestionsPart.output.id ?? "",
+                  title:
+                    requestSuggestionsPart.output.title ?? "Untitled document",
+                  kind: requestSuggestionsPart.output.kind ?? "text",
+                }}
+                type="request-suggestions"
               />
-            )}
-          </ToolContent>
-        </Tool>
+            ) : undefined
+          }
+          part={requestSuggestionsPart as DynamicToolPart}
+          title="requestSuggestions"
+        />
+      );
+    }
+
+    if (type === "dynamic-tool") {
+      return (
+        <DynamicToolCard
+          addToolApprovalResponse={addToolApprovalResponse}
+          key={(part as DynamicToolPart).toolCallId}
+          part={part as DynamicToolPart}
+        />
       );
     }
 

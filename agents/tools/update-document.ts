@@ -1,7 +1,7 @@
 import { tool } from "@openai/agents";
 import type { UIMessageStreamWriter } from "ai";
 import { z } from "zod";
-import { documentHandlersByArtifactKind } from "@/lib/artifacts/server";
+import { documentHandlersByArtifactKind } from "@/agents/artifacts/server";
 import { getDocumentById } from "@/lib/db/queries";
 import type { ChatMessage } from "@/lib/types";
 import type { AgentRuntimeContext } from "@/agents/types/context";

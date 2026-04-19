@@ -3,12 +3,12 @@ import {
   setDefaultModelProvider,
   setTracingDisabled,
 } from "@openai/agents";
-import { chatModels } from "@/lib/ai/models";
+import { getActiveModels } from "@/agents/config/model-config";
 
 let configuredProviderKey: string | null = null;
 
 export function resolveAgentModelConfig(modelId: string) {
-  return chatModels.find((model) => model.id === modelId) ?? null;
+  return getActiveModels().find((model) => model.id === modelId) ?? null;
 }
 
 export function resolveOpenAIAgentsModel(modelId: string) {

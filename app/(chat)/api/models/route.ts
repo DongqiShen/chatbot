@@ -2,7 +2,7 @@ import {
   getActiveModels,
   getDefaultChatModelId,
   getModelCapabilitiesMap,
-} from "@/config/model-config";
+} from "@/agents/config/model-config";
 
 export async function GET() {
   const headers = {

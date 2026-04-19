@@ -1,4 +1,4 @@
-import { systemPrompt } from "@/lib/ai/prompts";
+import { systemPrompt } from "@/agents/prompts";
 import type { AgentRuntimeContext } from "@/agents/types/context";
 
 export function buildAgentSystemPrompt(

@@ -1,10 +1,10 @@
 import { tool } from "@openai/agents";
 import { Output, streamText } from "ai";
 import { z } from "zod";
+import { getLanguageModel } from "@/agents/providers";
 import { getDocumentById, saveSuggestions } from "@/lib/db/queries";
 import type { Suggestion } from "@/lib/db/schema";
 import { generateUUID } from "@/lib/utils";
-import { getLanguageModel } from "@/lib/ai/providers";
 import type { AgentRuntimeContext } from "@/agents/types/context";
 
 export function createRequestSuggestionsAgentTool(

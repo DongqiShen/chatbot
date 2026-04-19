@@ -1,6 +1,6 @@
 import type { Session } from "next-auth";
 import type { UIMessageStreamWriter } from "ai";
-import type { RequestHints } from "@/lib/ai/prompts";
+import type { RequestHints } from "@/agents/types/request-hints";
 import type { DBMessage } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 

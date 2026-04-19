@@ -4,10 +4,12 @@ import { z } from "zod";
 import {
   artifactKinds,
   documentHandlersByArtifactKind,
-} from "@/lib/artifacts/server";
+} from "@/agents/artifacts/server";
+import {
+  type AgentRuntimeContext,
+} from "@/agents/types/context";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
-import type { AgentRuntimeContext } from "@/agents/types/context";
 
 function getDataStream(
   streamWriter?: UIMessageStreamWriter<ChatMessage>

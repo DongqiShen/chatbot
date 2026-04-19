@@ -6,7 +6,7 @@ import {
   type ChatModel,
   type ModelCapabilities,
   titleModel,
-} from "@/lib/ai/models";
+} from "@/config/chat-models";
 
 const defaultCapabilities: ModelCapabilities = {
   tools: true,

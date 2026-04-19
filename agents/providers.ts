@@ -3,12 +3,12 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   getConfiguredTitleModelId,
   resolveConfiguredLanguageModelId,
-} from "@/config/model-config";
-import { isTestEnvironment } from "../constants";
+} from "@/agents/config/model-config";
+import { isTestEnvironment } from "@/lib/constants";
 
 export const myProvider = isTestEnvironment
   ? (() => {
-      const { chatModel, titleModel } = require("./models.mock");
+      const { chatModel, titleModel } = require("@/testing/mock-language-models");
       return customProvider({
         languageModels: {
           "chat-model": chatModel,

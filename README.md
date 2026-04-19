@@ -36,7 +36,7 @@
 
 ## Model Providers
 
-This template uses the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) to access multiple AI models through a unified interface. Models are configured in `lib/ai/models.ts` with per-model provider routing. Included models: Mistral, Moonshot, DeepSeek, OpenAI, and xAI.
+This template exposes model metadata from `config/chat-models.ts` and uses the agent runtime in `agents/` for model execution. Included models: Mistral, Moonshot, DeepSeek, OpenAI, and xAI.
 
 ### AI Gateway Authentication
 
