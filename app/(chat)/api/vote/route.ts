@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
-import { getChatById, getVotesByChatId, voteMessage } from "@/lib/db/queries";
+import {
+  getChatById,
+  getMessageById,
+  getVotesByChatId,
+  voteMessage,
+} from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import {
   createRequestLogger,
@@ -9,8 +14,8 @@ import {
 } from "@/lib/logger";
 
 const voteSchema = z.object({
-  chatId: z.string(),
-  messageId: z.string(),
+  chatId: z.string().uuid(),
+  messageId: z.string().uuid(),
   type: z.enum(["up", "down"]),
 });
 
@@ -123,7 +128,7 @@ export function PATCH(request: Request) {
       );
       return new ChatbotError(
         "bad_request:api",
-        "Parameters chatId, messageId, and type are required."
+        "Parameters chatId and messageId must be valid UUIDs, and type is required."
       ).toResponse();
     }
 
@@ -165,6 +170,38 @@ export function PATCH(request: Request) {
             messageId,
             userId: session.user.id,
             ownerUserId: chat.userId,
+            durationMs: getDurationMs(startedAt),
+          }
+        );
+        return new ChatbotError("forbidden:vote").toResponse();
+      }
+
+      const [message] = await getMessageById({ id: messageId });
+
+      if (!message) {
+        requestLogger.logger.warn(
+          "Vote patch request rejected because message was not found",
+          {
+            chatId,
+            messageId,
+            userId: session.user.id,
+            durationMs: getDurationMs(startedAt),
+          }
+        );
+        return new ChatbotError(
+          "not_found:vote",
+          "This response is still being saved. Please try again in a moment."
+        ).toResponse();
+      }
+
+      if (message.chatId !== chatId) {
+        requestLogger.logger.warn(
+          "Vote patch request rejected because message does not belong to chat",
+          {
+            chatId,
+            messageId,
+            messageChatId: message.chatId,
+            userId: session.user.id,
             durationMs: getDurationMs(startedAt),
           }
         );

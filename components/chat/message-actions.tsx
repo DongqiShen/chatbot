@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { useCopyToClipboard } from "usehooks-ts";
 import type { Vote } from "@/lib/db/schema";
+import { ChatbotError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
+import { fetchWithErrorHandlers } from "@/lib/utils";
 import {
   MessageAction as Action,
   MessageActions as Actions,
@@ -16,16 +18,20 @@ export function PureMessageActions({
   message,
   vote,
   isLoading,
+  canVote,
   onEdit,
 }: {
   chatId: string;
   message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
+  canVote: boolean;
   onEdit?: () => void;
 }) {
   const { mutate } = useSWRConfig();
   const [_, copyToClipboard] = useCopyToClipboard();
+  const voteCacheKey = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`;
+  const votingDisabled = !canVote;
 
   if (isLoading) {
     return null;
@@ -45,6 +51,67 @@ export function PureMessageActions({
 
     await copyToClipboard(textFromParts);
     toast.success("Copied to clipboard!");
+  };
+
+  const sleep = (ms: number) =>
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+
+  const submitVote = async (type: "up" | "down") => {
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await fetchWithErrorHandlers(
+          `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              chatId,
+              messageId: message.id,
+              type,
+            }),
+          }
+        );
+        break;
+      } catch (error) {
+        const shouldRetry =
+          error instanceof ChatbotError &&
+          error.type === "not_found" &&
+          error.surface === "vote" &&
+          attempt < maxAttempts;
+
+        if (!shouldRetry) {
+          throw error;
+        }
+
+        await sleep(300 * attempt);
+      }
+    }
+
+    mutate<Vote[]>(
+      voteCacheKey,
+      (currentVotes) => {
+        if (!currentVotes) {
+          return [];
+        }
+
+        const votesWithoutCurrent = currentVotes.filter(
+          (currentVote) => currentVote.messageId !== message.id
+        );
+
+        return [
+          ...votesWithoutCurrent,
+          {
+            chatId,
+            messageId: message.id,
+            isUpvoted: type === "up",
+          },
+        ];
+      },
+      { revalidate: false }
+    );
   };
 
   if (message.role === "user") {
@@ -86,49 +153,15 @@ export function PureMessageActions({
       <Action
         className="text-muted-foreground/50 hover:text-foreground"
         data-testid="message-upvote"
-        disabled={vote?.isUpvoted}
+        disabled={votingDisabled || vote?.isUpvoted}
         onClick={() => {
-          const upvote = fetch(
-            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                chatId,
-                messageId: message.id,
-                type: "up",
-              }),
-            }
-          );
-
-          toast.promise(upvote, {
+          toast.promise(submitVote("up"), {
             loading: "Upvoting Response...",
-            success: () => {
-              mutate<Vote[]>(
-                `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`,
-                (currentVotes) => {
-                  if (!currentVotes) {
-                    return [];
-                  }
-
-                  const votesWithoutCurrent = currentVotes.filter(
-                    (currentVote) => currentVote.messageId !== message.id
-                  );
-
-                  return [
-                    ...votesWithoutCurrent,
-                    {
-                      chatId,
-                      messageId: message.id,
-                      isUpvoted: true,
-                    },
-                  ];
-                },
-                { revalidate: false }
-              );
-
-              return "Upvoted Response!";
-            },
-            error: "Failed to upvote response.",
+            success: "Upvoted Response!",
+            error: (error) =>
+              error instanceof Error
+                ? error.message
+                : "Failed to upvote response.",
           });
         }}
         tooltip="Upvote Response"
@@ -139,49 +172,15 @@ export function PureMessageActions({
       <Action
         className="text-muted-foreground/50 hover:text-foreground"
         data-testid="message-downvote"
-        disabled={vote && !vote.isUpvoted}
+        disabled={votingDisabled || (vote && !vote.isUpvoted)}
         onClick={() => {
-          const downvote = fetch(
-            `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote`,
-            {
-              method: "PATCH",
-              body: JSON.stringify({
-                chatId,
-                messageId: message.id,
-                type: "down",
-              }),
-            }
-          );
-
-          toast.promise(downvote, {
+          toast.promise(submitVote("down"), {
             loading: "Downvoting Response...",
-            success: () => {
-              mutate<Vote[]>(
-                `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`,
-                (currentVotes) => {
-                  if (!currentVotes) {
-                    return [];
-                  }
-
-                  const votesWithoutCurrent = currentVotes.filter(
-                    (currentVote) => currentVote.messageId !== message.id
-                  );
-
-                  return [
-                    ...votesWithoutCurrent,
-                    {
-                      chatId,
-                      messageId: message.id,
-                      isUpvoted: false,
-                    },
-                  ];
-                },
-                { revalidate: false }
-              );
-
-              return "Downvoted Response!";
-            },
-            error: "Failed to downvote response.",
+            success: "Downvoted Response!",
+            error: (error) =>
+              error instanceof Error
+                ? error.message
+                : "Failed to downvote response.",
           });
         }}
         tooltip="Downvote Response"
@@ -195,6 +194,9 @@ export function PureMessageActions({
 export const MessageActions = memo(
   PureMessageActions,
   (prevProps, nextProps) => {
+    if (prevProps.canVote !== nextProps.canVote) {
+      return false;
+    }
     if (!equal(prevProps.vote, nextProps.vote)) {
       return false;
     }
