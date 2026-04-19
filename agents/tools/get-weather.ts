@@ -1,36 +1,54 @@
 import { tool } from "@openai/agents";
 import { z } from "zod";
 import type { AgentRuntimeContext } from "@/agents/types/context";
+import { logger, serializeError } from "@/lib/logger";
 
 async function geocodeCity(
   city: string
 ): Promise<{ latitude: number; longitude: number } | null> {
+  const weatherLogger = logger.child({
+    component: "agent.tool.weather",
+    operation: "geocodeCity",
+    city,
+  });
+
   try {
     const response = await fetch(
       `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
     );
 
     if (!response.ok) {
+      weatherLogger.warn("Geocoding request returned a non-OK status", {
+        statusCode: response.status,
+      });
       return null;
     }
 
     const data = await response.json();
 
     if (!data.results || data.results.length === 0) {
+      weatherLogger.warn("Geocoding request returned no results");
       return null;
     }
 
     const result = data.results[0];
+    weatherLogger.info("Resolved city to coordinates", {
+      latitude: result.latitude,
+      longitude: result.longitude,
+    });
     return {
       latitude: result.latitude,
       longitude: result.longitude,
     };
-  } catch {
+  } catch (error) {
+    weatherLogger.error("Geocoding request failed", {
+      error: serializeError(error),
+    });
     return null;
   }
 }
 
-export function createGetWeatherAgentTool(_context: AgentRuntimeContext) {
+export function createGetWeatherAgentTool(context: AgentRuntimeContext) {
   return tool({
     name: "getWeather",
     description:
@@ -44,12 +62,23 @@ export function createGetWeatherAgentTool(_context: AgentRuntimeContext) {
         .optional(),
     }),
     async execute(input) {
+      const weatherLogger = logger.child({
+        component: "agent.tool.weather",
+        operation: "execute",
+        chatId: context.chatId,
+        userId: context.session.user?.id,
+        selectedModel: context.selectedModel,
+        city: input.city,
+      });
       let latitude: number;
       let longitude: number;
 
       if (input.city) {
         const coords = await geocodeCity(input.city);
         if (!coords) {
+          weatherLogger.warn(
+            "Weather lookup failed because city could not be resolved"
+          );
           return {
             error: `Could not find coordinates for "${input.city}". Please check the city name.`,
           };
@@ -64,6 +93,13 @@ export function createGetWeatherAgentTool(_context: AgentRuntimeContext) {
         latitude = input.latitude;
         longitude = input.longitude;
       } else {
+        weatherLogger.warn(
+          "Weather lookup rejected because location input is incomplete",
+          {
+            latitude: input.latitude,
+            longitude: input.longitude,
+          }
+        );
         return {
           error:
             "Please provide either a city name or both latitude and longitude coordinates.",
@@ -75,6 +111,11 @@ export function createGetWeatherAgentTool(_context: AgentRuntimeContext) {
       );
 
       if (!response.ok) {
+        weatherLogger.warn("Weather API returned a non-OK status", {
+          latitude,
+          longitude,
+          statusCode: response.status,
+        });
         return {
           error: "Weather service is currently unavailable.",
         };
@@ -86,6 +127,11 @@ export function createGetWeatherAgentTool(_context: AgentRuntimeContext) {
         weatherData.cityName = input.city;
       }
 
+      weatherLogger.info("Weather lookup completed", {
+        latitude,
+        longitude,
+        temperature: weatherData?.current?.temperature_2m,
+      });
       return weatherData;
     },
   });
