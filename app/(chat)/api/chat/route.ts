@@ -1,11 +1,8 @@
 import { geolocation, ipAddress } from "@vercel/functions";
 import {
-  convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateId,
-  stepCountIs,
-  streamText,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
@@ -19,28 +16,10 @@ import {
   findLatestRunStateMessage,
 } from "@/agents/state/run-state-attachment";
 import { serializeAgentRunResultToMessage } from "@/agents/state/serialize-run-result";
-import {
-  canUseOpenAIAgentsModel,
-  isOpenAIAgentsRuntimeEnabled,
-} from "@/agents/shared/model-config";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import {
-  allowedModelIds,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  getCapabilities,
-} from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
-import {
-  getLanguageModel,
-  isUsingConfiguredLanguageModel,
-} from "@/lib/ai/providers";
-import { createDocument } from "@/lib/ai/tools/create-document";
-import { editDocument } from "@/lib/ai/tools/edit-document";
-import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { updateDocument } from "@/lib/ai/tools/update-document";
+import { allowedModelIds, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
+import type { RequestHints } from "@/lib/ai/prompts";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   createStreamId,
@@ -84,6 +63,30 @@ function getStreamContext() {
 }
 
 export { getStreamContext };
+
+function createResumableResponse(
+  chatId: string,
+  stream: ReadableStream<any>
+) {
+  return createUIMessageStreamResponse({
+    stream,
+    async consumeSseStream({ stream: sseStream }) {
+      if (!process.env.REDIS_URL) {
+        return;
+      }
+      try {
+        const streamContext = getStreamContext();
+        if (streamContext) {
+          const streamId = generateId();
+          await createStreamId({ streamId, chatId });
+          await streamContext.createNewResumableStream(streamId, () => sseStream);
+        }
+      } catch (_) {
+        /* non-critical */
+      }
+    },
+  });
+}
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
@@ -210,88 +213,12 @@ export async function POST(request: Request) {
       });
     }
 
-    const shouldUseOpenAIAgentsRuntime =
-      !isToolApprovalFlow &&
-      message?.role === "user" &&
-      isOpenAIAgentsRuntimeEnabled() &&
-      canUseOpenAIAgentsModel(chatModel);
-
     const latestRunStateMessage = findLatestRunStateMessage(messagesFromDb);
-    const shouldResumeOpenAIAgentsRuntime =
-      isToolApprovalFlow &&
-      isOpenAIAgentsRuntimeEnabled() &&
-      canUseOpenAIAgentsModel(chatModel) &&
-      latestRunStateMessage !== null;
+    if (isToolApprovalFlow) {
+      if (!latestRunStateMessage) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
 
-    if (shouldUseOpenAIAgentsRuntime) {
-      let agentRunPromise:
-        | ReturnType<typeof runChatAgent>
-        | null = null;
-
-      const stream = createUIMessageStream({
-        execute: async ({ writer }) => {
-          agentRunPromise = runChatAgent({
-            chatId: id,
-            session,
-            selectedModel: chatModel,
-            requestHints,
-            messagesFromDb,
-            incomingMessage: message,
-            streamWriter: writer,
-          });
-
-          const agentRun = await agentRunPromise;
-
-          if (!agentRun.stream) {
-            throw new Error("OpenAI Agents runtime did not return a stream");
-          }
-
-          writer.merge(createAgentsUiMessageStream(agentRun.stream));
-        },
-      });
-
-      after(async () => {
-        try {
-          const agentRun = await agentRunPromise;
-          if (!agentRun?.stream) {
-            return;
-          }
-
-          await agentRun.stream.completed;
-          const serializedMessage = serializeAgentRunResultToMessage(
-            agentRun.stream
-          );
-
-          if (titlePromise) {
-            const title = await titlePromise;
-            await updateChatTitleById({ chatId: id, title });
-          }
-
-          if (!serializedMessage) {
-            return;
-          }
-
-          await saveMessages({
-            messages: [
-              {
-                id: serializedMessage.id,
-                role: serializedMessage.role,
-                parts: serializedMessage.parts,
-                createdAt: new Date(),
-                attachments: [createRunStateAttachment(agentRun.stream.state.toString())],
-                chatId: id,
-              },
-            ],
-          });
-        } catch (error) {
-          console.error("Failed to persist OpenAI Agents response:", error);
-        }
-      });
-
-      return createUIMessageStreamResponse({ stream });
-    }
-
-    if (shouldResumeOpenAIAgentsRuntime && latestRunStateMessage) {
       const agent = createChatAgentDefinition({
         chatId: id,
         session,
@@ -400,157 +327,73 @@ export async function POST(request: Request) {
         }
       });
 
-      return createUIMessageStreamResponse({ stream });
+      return createResumableResponse(id, stream);
     }
 
-    const usesConfiguredLanguageModel = isUsingConfiguredLanguageModel(chatModel);
-    const modelConfig = usesConfiguredLanguageModel
-      ? null
-      : chatModels.find((m) => m.id === chatModel);
-    const modelCapabilities = usesConfiguredLanguageModel
-      ? null
-      : await getCapabilities();
-    const capabilities = usesConfiguredLanguageModel
-      ? { reasoning: false, tools: true }
-      : modelCapabilities?.[chatModel];
-    const isReasoningModel = capabilities?.reasoning === true;
-    const supportsTools = capabilities?.tools !== false;
-
-    const modelMessages = await convertToModelMessages(uiMessages);
+    let agentRunPromise:
+      | ReturnType<typeof runChatAgent>
+      | null = null;
 
     const stream = createUIMessageStream({
-      originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const result = streamText({
-          model: getLanguageModel(chatModel),
-          system: systemPrompt({ requestHints, supportsTools }),
-          messages: modelMessages,
-          stopWhen: stepCountIs(5),
-          experimental_activeTools:
-            isReasoningModel && !supportsTools
-              ? []
-              : [
-                  "getWeather",
-                  "createDocument",
-                  "editDocument",
-                  "updateDocument",
-                  "requestSuggestions",
-                ],
-          providerOptions: {
-            ...(modelConfig?.gatewayOrder && {
-              gateway: { order: modelConfig.gatewayOrder },
-            }),
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
-            }),
-          },
-          tools: {
-            getWeather,
-            createDocument: createDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            editDocument: editDocument({ dataStream, session }),
-            updateDocument: updateDocument({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-              modelId: chatModel,
-            }),
-          },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
+      execute: async ({ writer }) => {
+        agentRunPromise = runChatAgent({
+          chatId: id,
+          session,
+          selectedModel: chatModel,
+          requestHints,
+          messagesFromDb,
+          incomingMessage: message,
+          streamWriter: writer,
         });
 
-        dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel })
-        );
+        const agentRun = await agentRunPromise;
+
+        if (!agentRun.stream) {
+          throw new Error("OpenAI Agents runtime did not return a stream");
+        }
+
+        writer.merge(createAgentsUiMessageStream(agentRun.stream));
+      },
+      generateId: generateUUID,
+    });
+
+    after(async () => {
+      try {
+        const agentRun = await agentRunPromise;
+        if (!agentRun?.stream) {
+          return;
+        }
+
+        await agentRun.stream.completed;
+        const serializedMessage = serializeAgentRunResultToMessage(agentRun.stream);
 
         if (titlePromise) {
           const title = await titlePromise;
-          dataStream.write({ type: "data-chat-title", data: title });
-          updateChatTitleById({ chatId: id, title });
+          await updateChatTitleById({ chatId: id, title });
         }
-      },
-      generateId: generateUUID,
-      onFinish: async ({ messages: finishedMessages }) => {
-        if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
-            const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
-            if (existingMsg) {
-              await updateMessage({
-                id: finishedMsg.id,
-                parts: finishedMsg.parts,
-              });
-            } else {
-              await saveMessages({
-                messages: [
-                  {
-                    id: finishedMsg.id,
-                    role: finishedMsg.role,
-                    parts: finishedMsg.parts,
-                    createdAt: new Date(),
-                    attachments: [],
-                    chatId: id,
-                  },
-                ],
-              });
-            }
-          }
-        } else if (finishedMessages.length > 0) {
-          await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
-              id: currentMessage.id,
-              role: currentMessage.role,
-              parts: currentMessage.parts,
-              createdAt: new Date(),
-              attachments: [],
-              chatId: id,
-            })),
-          });
-        }
-      },
-      onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests"
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
-      },
-    });
 
-    return createUIMessageStreamResponse({
-      stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
+        if (!serializedMessage) {
           return;
         }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
-          }
-        } catch (_) {
-          /* non-critical */
-        }
-      },
+
+        await saveMessages({
+          messages: [
+            {
+              id: serializedMessage.id,
+              role: serializedMessage.role,
+              parts: serializedMessage.parts,
+              createdAt: new Date(),
+              attachments: [createRunStateAttachment(agentRun.stream.state.toString())],
+              chatId: id,
+            },
+          ],
+        });
+      } catch (error) {
+        console.error("Failed to persist OpenAI Agents response:", error);
+      }
     });
+
+    return createResumableResponse(id, stream);
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");
 

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { auth } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { titlePrompt } from "@/lib/ai/prompts";
-import { getTitleModel, getTitleModelGatewayOrder } from "@/lib/ai/providers";
+import { getTitleModel } from "@/lib/ai/providers";
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getChatById,
@@ -24,17 +24,10 @@ export async function generateTitleFromUserMessage({
 }: {
   message: UIMessage;
 }) {
-  const gatewayOrder = getTitleModelGatewayOrder();
-
   const { text } = await generateText({
     model: getTitleModel(),
     system: titlePrompt,
     prompt: getTextFromMessage(message),
-    ...(gatewayOrder && {
-      providerOptions: {
-        gateway: { order: gatewayOrder },
-      },
-    }),
   });
   return text
     .replace(/^[#*"\s]+/, "")

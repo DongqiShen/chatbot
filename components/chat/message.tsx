@@ -564,7 +564,10 @@ const PurePreviewMessage = ({
           args={{
             id: updateDocumentPart.input?.id ?? "",
             description:
-              updateDocumentPart.input?.description ?? "Updating document",
+              (updateDocumentPart.input &&
+              "description" in updateDocumentPart.input
+                ? updateDocumentPart.input.description
+                : undefined) ?? "Updating document",
           }}
           isReadonly={isReadonly}
           key={updateDocumentPart.toolCallId}

@@ -1,4 +1,4 @@
-import { customProvider, gateway } from "ai";
+import { customProvider } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { isTestEnvironment } from "../constants";
 import { titleModel } from "./models";
@@ -54,12 +54,16 @@ export function isUsingConfiguredLanguageModel(modelId: string) {
   return resolveConfiguredLanguageModelId(modelId) !== modelId;
 }
 
-export function getTitleModelGatewayOrder() {
-  if (process.env.OPENAI_MODEL) {
-    return undefined;
+function getRequiredCompatibleProvider() {
+  const provider = getConfiguredOpenAICompatibleProvider();
+
+  if (!provider) {
+    throw new Error(
+      "OPENAI_API_KEY and OPENAI_BASE_URL must be configured for model generation."
+    );
   }
 
-  return titleModel.gatewayOrder;
+  return provider;
 }
 
 export function getLanguageModel(modelId: string) {
@@ -67,14 +71,10 @@ export function getLanguageModel(modelId: string) {
     return myProvider.languageModel(modelId);
   }
 
-  const configuredProvider = getConfiguredOpenAICompatibleProvider();
+  const configuredProvider = getRequiredCompatibleProvider();
   const resolvedModelId = resolveConfiguredLanguageModelId(modelId);
 
-  if (configuredProvider) {
-    return configuredProvider.chatModel(resolvedModelId);
-  }
-
-  return gateway.languageModel(resolvedModelId);
+  return configuredProvider.chatModel(resolvedModelId);
 }
 
 export function getTitleModel() {
@@ -82,12 +82,8 @@ export function getTitleModel() {
     return myProvider.languageModel("title-model");
   }
 
-  const configuredProvider = getConfiguredOpenAICompatibleProvider();
+  const configuredProvider = getRequiredCompatibleProvider();
   const resolvedModelId = resolveConfiguredLanguageModelId(titleModel.id);
 
-  if (configuredProvider) {
-    return configuredProvider.chatModel(resolvedModelId);
-  }
-
-  return gateway.languageModel(resolvedModelId);
+  return configuredProvider.chatModel(resolvedModelId);
 }

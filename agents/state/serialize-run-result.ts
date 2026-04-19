@@ -202,7 +202,7 @@ export function serializeAgentRunResultToMessage(
           toolCallId: toolCall.toolCallId,
           state: "output-available" as const,
           input: toolCall.input as WeatherToolInput,
-          output: toolOutput.output,
+          output: toolOutput.output as any,
         };
 
         if (existingIndex >= 0) {

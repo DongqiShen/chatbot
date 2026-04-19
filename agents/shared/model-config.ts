@@ -11,10 +11,6 @@ export function resolveAgentModelConfig(modelId: string) {
   return chatModels.find((model) => model.id === modelId) ?? null;
 }
 
-export function isOpenAIAgentsRuntimeEnabled() {
-  return process.env.ENABLE_OPENAI_AGENTS_RUNTIME === "true";
-}
-
 export function resolveOpenAIAgentsModel(modelId: string) {
   if (process.env.OPENAI_MODEL) {
     return process.env.OPENAI_MODEL;
@@ -25,10 +21,6 @@ export function resolveOpenAIAgentsModel(modelId: string) {
   }
 
   return null;
-}
-
-export function canUseOpenAIAgentsModel(modelId: string) {
-  return resolveOpenAIAgentsModel(modelId) !== null;
 }
 
 export function configureOpenAIAgentsProvider() {
